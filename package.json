@@ -1,0 +1,39 @@
+{
+  "name": "markdown-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for browsing and searching Markdown documentation",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "markdown-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "ReadMe.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "mcp",
+    "markdown",
+    "documentation",
+    "model-context-protocol"
+  ],
+  "author": "jgauffin",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "fast-glob": "^3.3.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

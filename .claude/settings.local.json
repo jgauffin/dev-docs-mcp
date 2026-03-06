@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ts-language-mcp__get_hover",
+      "mcp__relaxjs-docs__get_doc_index"
+    ]
+  }
+}
