@@ -7,6 +7,7 @@ import {
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   handleGetDocIndex,
+  handleGetSubIndex,
   handleReadDocFile,
   handleGetFileToc,
   handleGetChapters,
@@ -58,11 +59,27 @@ const TOOLS: Tool[] = [
   {
     name: "get_doc_index",
     description:
-      "Returns a list of all available documentation files with their title and abstract.",
+      "Returns the top-level documentation index: root files and folder summaries with document counts. Use get_sub_index to drill into a specific folder.",
     inputSchema: {
       type: "object",
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: "get_sub_index",
+    description:
+      "Returns the documentation index for a specific folder/section. Lists files with titles and abstracts within that folder.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "Folder path to list (e.g., 'opcodes', 'tutorials', 'headers')",
+        },
+      },
+      required: ["path"],
     },
   },
   {
@@ -130,7 +147,7 @@ const TOOLS: Tool[] = [
       properties: {
         query: {
           type: "string",
-          description: "Regex pattern to search for (case insensitive)",
+          description: "Regex pattern to search for (case insensitive). Use '|' to search multiple terms (e.g. 'router.*link|anchor|r-a') — results are grouped per term.",
         },
         path_pattern: {
           type: "string",
@@ -162,6 +179,8 @@ mcpServer.server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (name) {
     case "get_doc_index":
       return handleGetDocIndex(source);
+    case "get_sub_index":
+      return handleGetSubIndex(args as { path: string }, source);
     case "read_doc_file":
       return handleReadDocFile(args as { file_path: string }, source);
     case "get_file_toc":
