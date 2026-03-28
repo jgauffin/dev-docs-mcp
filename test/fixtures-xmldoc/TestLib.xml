@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<doc>
+  <assembly>
+    <name>TestLib</name>
+  </assembly>
+  <members>
+    <member name="T:TestLib.Models.User">
+      <summary>Represents a user in the system.</summary>
+      <remarks>Users are identified by their unique Id property.</remarks>
+    </member>
+    <member name="P:TestLib.Models.User.Id">
+      <summary>Gets or sets the unique identifier.</summary>
+    </member>
+    <member name="P:TestLib.Models.User.Name">
+      <summary>Gets or sets the user's display name.</summary>
+    </member>
+    <member name="M:TestLib.Models.User.GetDisplayName">
+      <summary>Returns the formatted display name.</summary>
+      <returns>A string containing the display name.</returns>
+    </member>
+    <member name="M:TestLib.Models.User.SetPassword(System.String)">
+      <summary>Sets the user's password.</summary>
+      <param name="password">The new password to set.</param>
+      <exception cref="T:System.ArgumentException">Thrown when password is empty.</exception>
+    </member>
+    <member name="M:TestLib.Models.User.#ctor(System.String,System.String)">
+      <summary>Creates a new User instance.</summary>
+      <param name="name">The user's name.</param>
+      <param name="email">The user's email address.</param>
+    </member>
+    <member name="T:TestLib.Models.Role">
+      <summary>Represents a role that can be assigned to users.</summary>
+    </member>
+    <member name="P:TestLib.Models.Role.Name">
+      <summary>Gets or sets the role name.</summary>
+    </member>
+    <member name="F:TestLib.Models.Role.AdminRole">
+      <summary>The built-in administrator role name.</summary>
+    </member>
+    <member name="T:TestLib.Services.UserService">
+      <summary>Provides user management operations.</summary>
+      <remarks>This service handles CRUD operations for users.</remarks>
+    </member>
+    <member name="M:TestLib.Services.UserService.GetById(System.Int32)">
+      <summary>Retrieves a user by their identifier.</summary>
+      <param name="id">The user identifier.</param>
+      <returns>The user if found, null otherwise.</returns>
+      <exception cref="T:System.ArgumentOutOfRangeException">Thrown when id is negative.</exception>
+    </member>
+    <member name="M:TestLib.Services.UserService.Search(System.String,System.Int32)">
+      <summary>Searches for users matching the given query.</summary>
+      <param name="query">The search query string.</param>
+      <param name="maxResults">Maximum number of results to return.</param>
+      <returns>A list of matching users.</returns>
+      <example>var users = service.Search("john", 10);</example>
+    </member>
+    <member name="E:TestLib.Services.UserService.UserCreated">
+      <summary>Raised when a new user is created.</summary>
+    </member>
+  </members>
+</doc>

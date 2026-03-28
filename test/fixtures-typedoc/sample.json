@@ -1,0 +1,333 @@
+{
+  "id": 0,
+  "name": "my-lib",
+  "kind": 1,
+  "children": [
+    {
+      "id": 1,
+      "name": "models",
+      "kind": 2,
+      "children": [
+        {
+          "id": 2,
+          "name": "User",
+          "kind": 128,
+          "comment": {
+            "summary": [
+              { "kind": "text", "text": "Represents a user in the system." }
+            ],
+            "blockTags": [
+              {
+                "tag": "@remarks",
+                "content": [
+                  { "kind": "text", "text": "Users are stored in the database." }
+                ]
+              }
+            ]
+          },
+          "children": [
+            {
+              "id": 3,
+              "name": "id",
+              "kind": 1024,
+              "comment": {
+                "summary": [
+                  { "kind": "text", "text": "The unique identifier." }
+                ]
+              },
+              "type": {
+                "type": "intrinsic",
+                "name": "number"
+              }
+            },
+            {
+              "id": 4,
+              "name": "name",
+              "kind": 1024,
+              "comment": {
+                "summary": [
+                  { "kind": "text", "text": "The user's display name." }
+                ]
+              },
+              "type": {
+                "type": "intrinsic",
+                "name": "string"
+              }
+            },
+            {
+              "id": 5,
+              "name": "constructor",
+              "kind": 512,
+              "signatures": [
+                {
+                  "name": "constructor",
+                  "kind": 16384,
+                  "comment": {
+                    "summary": [
+                      { "kind": "text", "text": "Creates a new User." }
+                    ]
+                  },
+                  "parameters": [
+                    {
+                      "name": "name",
+                      "comment": {
+                        "summary": [
+                          { "kind": "text", "text": "The user's name." }
+                        ]
+                      },
+                      "type": {
+                        "type": "intrinsic",
+                        "name": "string"
+                      }
+                    },
+                    {
+                      "name": "email",
+                      "comment": {
+                        "summary": [
+                          { "kind": "text", "text": "The user's email." }
+                        ]
+                      },
+                      "type": {
+                        "type": "intrinsic",
+                        "name": "string"
+                      }
+                    }
+                  ],
+                  "type": {
+                    "type": "reference",
+                    "name": "User"
+                  }
+                }
+              ]
+            },
+            {
+              "id": 6,
+              "name": "getDisplayName",
+              "kind": 2048,
+              "signatures": [
+                {
+                  "name": "getDisplayName",
+                  "kind": 4096,
+                  "comment": {
+                    "summary": [
+                      { "kind": "text", "text": "Returns the formatted display name." }
+                    ],
+                    "blockTags": [
+                      {
+                        "tag": "@returns",
+                        "content": [
+                          { "kind": "text", "text": "The display name string." }
+                        ]
+                      }
+                    ]
+                  },
+                  "parameters": [],
+                  "type": {
+                    "type": "intrinsic",
+                    "name": "string"
+                  }
+                }
+              ]
+            },
+            {
+              "id": 7,
+              "name": "setPassword",
+              "kind": 2048,
+              "signatures": [
+                {
+                  "name": "setPassword",
+                  "kind": 4096,
+                  "comment": {
+                    "summary": [
+                      { "kind": "text", "text": "Sets the user's password." }
+                    ],
+                    "blockTags": [
+                      {
+                        "tag": "@example",
+                        "content": [
+                          { "kind": "text", "text": "user.setPassword('secret123');" }
+                        ]
+                      }
+                    ]
+                  },
+                  "parameters": [
+                    {
+                      "name": "password",
+                      "comment": {
+                        "summary": [
+                          { "kind": "text", "text": "The new password." }
+                        ]
+                      },
+                      "type": {
+                        "type": "intrinsic",
+                        "name": "string"
+                      }
+                    }
+                  ],
+                  "type": {
+                    "type": "intrinsic",
+                    "name": "void"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "name": "Role",
+          "kind": 256,
+          "comment": {
+            "summary": [
+              { "kind": "text", "text": "Defines the shape of a user role." }
+            ]
+          },
+          "children": [
+            {
+              "id": 9,
+              "name": "name",
+              "kind": 1024,
+              "comment": {
+                "summary": [
+                  { "kind": "text", "text": "The role name." }
+                ]
+              },
+              "type": {
+                "type": "intrinsic",
+                "name": "string"
+              }
+            },
+            {
+              "id": 10,
+              "name": "permissions",
+              "kind": 1024,
+              "comment": {
+                "summary": [
+                  { "kind": "text", "text": "List of permissions." }
+                ]
+              },
+              "type": {
+                "type": "array",
+                "elementType": {
+                  "type": "intrinsic",
+                  "name": "string"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "name": "Status",
+          "kind": 8,
+          "comment": {
+            "summary": [
+              { "kind": "text", "text": "User account status." }
+            ]
+          },
+          "children": [
+            {
+              "id": 12,
+              "name": "Active",
+              "kind": 16,
+              "type": {
+                "type": "literal",
+                "value": 0
+              }
+            },
+            {
+              "id": 13,
+              "name": "Inactive",
+              "kind": 16,
+              "type": {
+                "type": "literal",
+                "value": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "name": "services",
+      "kind": 2,
+      "children": [
+        {
+          "id": 21,
+          "name": "createUser",
+          "kind": 64,
+          "signatures": [
+            {
+              "name": "createUser",
+              "kind": 4096,
+              "comment": {
+                "summary": [
+                  { "kind": "text", "text": "Creates a new user in the system." }
+                ],
+                "blockTags": [
+                  {
+                    "tag": "@returns",
+                    "content": [
+                      { "kind": "text", "text": "The created user." }
+                    ]
+                  }
+                ]
+              },
+              "parameters": [
+                {
+                  "name": "name",
+                  "comment": {
+                    "summary": [
+                      { "kind": "text", "text": "The user's name." }
+                    ]
+                  },
+                  "type": {
+                    "type": "intrinsic",
+                    "name": "string"
+                  }
+                },
+                {
+                  "name": "email",
+                  "comment": {
+                    "summary": [
+                      { "kind": "text", "text": "The user's email." }
+                    ]
+                  },
+                  "type": {
+                    "type": "intrinsic",
+                    "name": "string"
+                  }
+                }
+              ],
+              "type": {
+                "type": "reference",
+                "name": "Promise",
+                "typeArguments": [
+                  {
+                    "type": "reference",
+                    "name": "User"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": 22,
+          "name": "UserCallback",
+          "kind": 2097152,
+          "comment": {
+            "summary": [
+              { "kind": "text", "text": "Callback type for user events." }
+            ]
+          },
+          "type": {
+            "type": "reflection",
+            "declaration": {}
+          }
+        }
+      ]
+    }
+  ]
+}

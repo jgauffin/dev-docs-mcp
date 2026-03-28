@@ -3,19 +3,21 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import {
-  resolveDocPath,
   extractToc,
   extractChapters,
   textResult,
   handleGetDocIndex,
+  handleGetSubIndex,
   handleReadDocFile,
   handleGetFileToc,
   handleGetChapters,
   handleSearchDocs,
-} from "../src/handlers.js";
+} from "../src/markdown/handlers.js";
+import { FileSystemSource, GitHubSource, parseGitHubUrl } from "../src/source.js";
 
 const execFileAsync = promisify(execFile);
 const FIXTURES_PATH = path.resolve(import.meta.dirname, "fixtures");
+const fixturesSource = new FileSystemSource(FIXTURES_PATH);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI argument tests
@@ -29,13 +31,11 @@ describe("CLI argument", () => {
     } catch (err: unknown) {
       const error = err as { code: number; stderr: string };
       expect(error.code).toBe(1);
-      expect(error.stderr).toContain("Usage: markdown-mcp <docs-folder>");
+      expect(error.stderr).toContain("Usage:");
     }
   });
 
   it("uses the provided docs folder argument", async () => {
-    // Start the server with the fixtures path - it will connect to stdio
-    // and print the startup message to stderr, proving it accepted the arg.
     const child = execFile("node", ["dist/index.js", FIXTURES_PATH]);
 
     const stderr = await new Promise<string>((resolve, reject) => {
@@ -56,45 +56,43 @@ describe("CLI argument", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// resolveDocPath tests
+// resolvePath tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("resolveDocPath", () => {
-  const testDocsRoot = "D:/test/docs";
-  const normalizedRoot = path.normalize(testDocsRoot);
+describe("resolvePath", () => {
+  const source = new FileSystemSource("D:/test/docs");
 
   describe("path normalization", () => {
     it("adds .md extension if missing", () => {
-      const result = resolveDocPath("readme", testDocsRoot);
-      expect(result).toBe(path.join(normalizedRoot, "readme.md"));
+      const result = source.resolvePath("readme");
+      expect(result).toBe("readme.md");
     });
 
     it("does not double-add .md extension", () => {
-      const result = resolveDocPath("readme.md", testDocsRoot);
-      expect(result).toBe(path.join(normalizedRoot, "readme.md"));
+      const result = source.resolvePath("readme.md");
+      expect(result).toBe("readme.md");
     });
 
     it("resolves nested paths", () => {
-      const result = resolveDocPath("api/endpoints.md", testDocsRoot);
-      expect(result).toBe(path.join(normalizedRoot, "api", "endpoints.md"));
+      const result = source.resolvePath("api/endpoints.md");
+      expect(result).toBe("api/endpoints.md");
     });
   });
 
   describe("security (directory traversal prevention)", () => {
     it("blocks paths trying to escape with ..", () => {
-      const result = resolveDocPath("../../../etc/passwd", testDocsRoot);
+      const result = source.resolvePath("../../../etc/passwd");
       expect(result).toBeNull();
     });
 
     it("blocks absolute paths outside docs root", () => {
-      const result = resolveDocPath("/etc/passwd", testDocsRoot);
+      const result = source.resolvePath("/etc/passwd");
       expect(result).toBeNull();
     });
 
     it("allows valid nested paths", () => {
-      const result = resolveDocPath("api/endpoints/users.md", testDocsRoot);
+      const result = source.resolvePath("api/endpoints/users.md");
       expect(result).not.toBeNull();
-      expect(result).toContain(normalizedRoot);
     });
   });
 });
@@ -108,21 +106,20 @@ describe("extractToc", () => {
     const content = "# Main Title";
     const toc = extractToc(content);
     expect(toc).toHaveLength(1);
-    expect(toc[0]).toContain("Main Title");
-    expect(toc[0]).toContain("[Line 1]");
+    expect(toc[0]).toEqual({ line: 1, title: "Main Title", level: 1 });
   });
 
-  it("extracts multiple header levels with correct indentation", () => {
+  it("extracts multiple header levels with correct structure", () => {
     const content = `# Title
 ## Section 1
 ### Subsection
 ## Section 2`;
     const toc = extractToc(content);
     expect(toc).toHaveLength(4);
-    expect(toc[0]).toBe("- [Line 1] Title");
-    expect(toc[1]).toBe("  - [Line 2] Section 1");
-    expect(toc[2]).toBe("    - [Line 3] Subsection");
-    expect(toc[3]).toBe("  - [Line 4] Section 2");
+    expect(toc[0]).toEqual({ line: 1, title: "Title", level: 1 });
+    expect(toc[1]).toEqual({ line: 2, title: "Section 1", level: 2 });
+    expect(toc[2]).toEqual({ line: 3, title: "Subsection", level: 3 });
+    expect(toc[3]).toEqual({ line: 4, title: "Section 2", level: 2 });
   });
 
   it("handles all header levels (h1-h6)", () => {
@@ -134,7 +131,7 @@ describe("extractToc", () => {
 ###### H6`;
     const toc = extractToc(content);
     expect(toc).toHaveLength(6);
-    expect(toc[5]).toBe("          - [Line 6] H6");
+    expect(toc[5]).toEqual({ line: 6, title: "H6", level: 6 });
   });
 
   it("ignores non-header lines", () => {
@@ -144,7 +141,7 @@ More text
 Not a #header`;
     const toc = extractToc(content);
     expect(toc).toHaveLength(1);
-    expect(toc[0]).toBe("- [Line 2] Header");
+    expect(toc[0]).toEqual({ line: 2, title: "Header", level: 1 });
   });
 
   it("returns empty array for content without headers", () => {
@@ -156,7 +153,7 @@ Not a #header`;
   it("preserves header text exactly", () => {
     const content = "# Header with `code` and **bold**";
     const toc = extractToc(content);
-    expect(toc[0]).toContain("Header with `code` and **bold**");
+    expect(toc[0]!.title).toBe("Header with `code` and **bold**");
   });
 
   it("does not include abstracts by default", () => {
@@ -164,7 +161,8 @@ Not a #header`;
 
 Welcome to the docs.`;
     const toc = extractToc(content);
-    expect(toc[0]).toBe("- [Line 1] Title");
+    expect(toc[0]).toEqual({ line: 1, title: "Title", level: 1 });
+    expect(toc[0]!.abstract).toBeUndefined();
   });
 
   it("includes abstracts when enabled", () => {
@@ -178,9 +176,9 @@ Here is how to use it.
 
 ## API`;
     const toc = extractToc(content, true);
-    expect(toc[0]).toBe("- [Line 1] Title — Welcome to the docs.");
-    expect(toc[1]).toBe("  - [Line 5] Usage — Here is how to use it.");
-    expect(toc[2]).toBe("  - [Line 9] API");
+    expect(toc[0]).toEqual({ line: 1, title: "Title", level: 1, abstract: "Welcome to the docs." });
+    expect(toc[1]).toEqual({ line: 5, title: "Usage", level: 2, abstract: "Here is how to use it." });
+    expect(toc[2]).toEqual({ line: 9, title: "API", level: 2 });
   });
 });
 
@@ -281,117 +279,133 @@ describe("textResult", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Handler tests (using fixtures)
+// Handler tests (using fixtures) — all YAML output
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("handleGetDocIndex", () => {
-  it("returns list of all markdown files with their titles", async () => {
-    const result = await handleGetDocIndex(FIXTURES_PATH);
+  it("returns YAML index of all markdown files", async () => {
+    const result = await handleGetDocIndex(fixturesSource);
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("## Documentation Index");
-    expect(result.content[0].text).toContain("index.md: Framework Documentation");
-    expect(result.content[0].text).toContain("api/endpoints.md: API Endpoints");
-    expect(result.content[0].text).toContain("components/button.md: Button Component");
+    const text = result.content[0].text;
+    expect(text).toContain("doc_index:");
+    expect(text).toContain("total:");
+    expect(text).toContain("entries:");
   });
 
-  it("includes abstract from first paragraph after heading", async () => {
-    const result = await handleGetDocIndex(FIXTURES_PATH);
+  it("includes file paths and titles in YAML entries", async () => {
+    const result = await handleGetDocIndex(fixturesSource);
     const text = result.content[0].text;
-    expect(text).toContain("Button Component — A reusable button component.");
-    expect(text).toContain("Framework Documentation — Welcome to the framework documentation.");
+    expect(text).toContain('"index.md"');
+    expect(text).toContain('"Framework Documentation"');
+    expect(text).toContain('"api/endpoints.md"');
+    expect(text).toContain('"API Endpoints"');
+    expect(text).toContain('"components/button.md"');
+    expect(text).toContain('"Button Component"');
   });
 
-  it("omits abstract when no paragraph follows the heading", async () => {
-    const result = await handleGetDocIndex(FIXTURES_PATH);
+  it("includes abstracts in YAML entries", async () => {
+    const result = await handleGetDocIndex(fixturesSource);
     const text = result.content[0].text;
-    // API Endpoints has no paragraph after the heading (next line is ## Authentication)
-    expect(text).toMatch(/api\/endpoints\.md: API Endpoints$/m);
+    expect(text).toContain('"A reusable button component."');
+    expect(text).toContain('"Welcome to the framework documentation."');
   });
 
   it("returns error when docs root does not exist", async () => {
-    const result = await handleGetDocIndex("/nonexistent/path");
+    const badSource = new FileSystemSource("/nonexistent/path");
+    const result = await handleGetDocIndex(badSource);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("No documentation files found");
   });
 });
 
 describe("handleReadDocFile", () => {
-  it("reads a documentation file", async () => {
-    const result = await handleReadDocFile({ file_path: "index.md" }, FIXTURES_PATH);
+  it("reads a documentation file and returns raw markdown", async () => {
+    const result = await handleReadDocFile({ file_path: "index.md" }, fixturesSource);
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("# Framework Documentation");
+    const text = result.content[0].text;
+    expect(text).toContain("# Framework Documentation");
   });
 
   it("returns error for invalid arguments", async () => {
-    const result = await handleReadDocFile({} as { file_path: string }, FIXTURES_PATH);
+    const result = await handleReadDocFile({} as { file_path: string }, fixturesSource);
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Invalid arguments");
+    expect(result.content[0].text).toContain("file_path is required");
   });
 
   it("returns error for non-existent file", async () => {
-    const result = await handleReadDocFile({ file_path: "nonexistent.md" }, FIXTURES_PATH);
+    const result = await handleReadDocFile({ file_path: "nonexistent.md" }, fixturesSource);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("File not found");
   });
 
   it("blocks directory traversal attempts", async () => {
-    const result = await handleReadDocFile({ file_path: "../../../etc/passwd" }, FIXTURES_PATH);
+    const result = await handleReadDocFile({ file_path: "../../../etc/passwd" }, fixturesSource);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Invalid path");
   });
 });
 
 describe("handleGetFileToc", () => {
-  it("extracts table of contents from a file", async () => {
-    const result = await handleGetFileToc({ file_path: "api/endpoints.md" }, FIXTURES_PATH);
+  it("extracts table of contents as YAML", async () => {
+    const result = await handleGetFileToc({ file_path: "api/endpoints.md" }, fixturesSource);
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("Table of Contents");
-    expect(result.content[0].text).toContain("API Endpoints");
-    expect(result.content[0].text).toContain("Authentication");
+    const text = result.content[0].text;
+    expect(text).toContain("toc:");
+    expect(text).toContain('file: "api/endpoints.md"');
+    expect(text).toContain("headings:");
+    expect(text).toContain('"API Endpoints"');
+    expect(text).toContain('"Authentication"');
   });
 
   it("excludes abstracts by default", async () => {
-    const result = await handleGetFileToc({ file_path: "components/button.md" }, FIXTURES_PATH);
-    expect(result.content[0].text).not.toContain("—");
+    const result = await handleGetFileToc({ file_path: "components/button.md" }, fixturesSource);
+    expect(result.content[0].text).not.toContain("abstract:");
   });
 
   it("includes abstracts when requested", async () => {
-    const result = await handleGetFileToc({ file_path: "components/button.md", include_abstracts: true }, FIXTURES_PATH);
-    expect(result.content[0].text).toContain("Button Component — A reusable button component.");
+    const result = await handleGetFileToc({ file_path: "components/button.md", include_abstracts: true }, fixturesSource);
+    const text = result.content[0].text;
+    expect(text).toContain("abstract:");
+    expect(text).toContain('"A reusable button component."');
   });
 
   it("returns error for non-existent file", async () => {
-    const result = await handleGetFileToc({ file_path: "nonexistent.md" }, FIXTURES_PATH);
+    const result = await handleGetFileToc({ file_path: "nonexistent.md" }, fixturesSource);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("File not found");
   });
 });
 
 describe("handleGetChapters", () => {
-  it("returns content of requested chapters", async () => {
+  it("returns YAML with requested chapter content", async () => {
     const result = await handleGetChapters(
       { file_path: "api/endpoints.md", headings: ["Authentication"] },
-      FIXTURES_PATH
+      fixturesSource
     );
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("## Authentication");
-    expect(result.content[0].text).toContain("POST /auth/login");
+    const text = result.content[0].text;
+    expect(text).toContain("chapters:");
+    expect(text).toContain('file: "api/endpoints.md"');
+    expect(text).toContain("sections:");
+    expect(text).toContain('"Authentication"');
+    expect(text).toContain("content: |");
+    expect(text).toContain("POST /auth/login");
   });
 
-  it("returns multiple chapters separated by dividers", async () => {
+  it("returns multiple chapters in YAML sections", async () => {
     const result = await handleGetChapters(
       { file_path: "api/endpoints.md", headings: ["Authentication", "Error Handling"] },
-      FIXTURES_PATH
+      fixturesSource
     );
-    expect(result.content[0].text).toContain("## Authentication");
-    expect(result.content[0].text).toContain("## Error Handling");
-    expect(result.content[0].text).toContain("---");
+    const text = result.content[0].text;
+    expect(text).toContain('"Authentication"');
+    expect(text).toContain('"Error Handling"');
   });
 
-  it("returns message when no chapters match", async () => {
+  it("returns error message when no chapters match", async () => {
     const result = await handleGetChapters(
       { file_path: "api/endpoints.md", headings: ["Nonexistent"] },
-      FIXTURES_PATH
+      fixturesSource
     );
     expect(result.content[0].text).toContain("No matching chapters found");
   });
@@ -399,7 +413,7 @@ describe("handleGetChapters", () => {
   it("returns error for non-existent file", async () => {
     const result = await handleGetChapters(
       { file_path: "nonexistent.md", headings: ["Test"] },
-      FIXTURES_PATH
+      fixturesSource
     );
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("File not found");
@@ -407,36 +421,128 @@ describe("handleGetChapters", () => {
 });
 
 describe("handleSearchDocs", () => {
-  it("finds matches across documentation files", async () => {
-    const result = await handleSearchDocs({ query: "Button" }, FIXTURES_PATH);
+  it("finds matches and returns YAML", async () => {
+    const result = await handleSearchDocs({ query: "Button" }, fixturesSource);
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("Search Results");
-    expect(result.content[0].text).toContain("button.md");
+    const text = result.content[0].text;
+    expect(text).toContain("search:");
+    expect(text).toContain('query: "Button"');
+    expect(text).toContain("total:");
+    expect(text).toContain("results:");
+    expect(text).toContain("button.md");
   });
 
   it("filters by glob pattern", async () => {
-    const result = await handleSearchDocs({ query: "#", path_pattern: "api/" }, FIXTURES_PATH);
+    const result = await handleSearchDocs({ query: "#", path_pattern: "api/" }, fixturesSource);
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("endpoints.md");
-    expect(result.content[0].text).not.toContain("button.md");
+    const text = result.content[0].text;
+    expect(text).toContain("endpoints.md");
+    expect(text).not.toContain("button.md");
   });
 
   it("supports glob wildcards in path pattern", async () => {
-    const result = await handleSearchDocs({ query: "Component", path_pattern: "components/*.md" }, FIXTURES_PATH);
+    const result = await handleSearchDocs({ query: "Component", path_pattern: "components/*.md" }, fixturesSource);
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("button.md");
-    expect(result.content[0].text).not.toContain("endpoints.md");
+    const text = result.content[0].text;
+    expect(text).toContain("button.md");
+    expect(text).not.toContain("endpoints.md");
+  });
+
+  it("supports | delimited glob patterns for OR search", async () => {
+    const result = await handleSearchDocs({ query: "#", path_pattern: "api/|components/" }, fixturesSource);
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0].text;
+    expect(text).toContain("endpoints.md");
+    expect(text).toContain("button.md");
+    // Should not include files from other folders like guides/
+    expect(text).not.toContain("getting-started.md");
   });
 
   it("returns no matches message when nothing found", async () => {
-    const result = await handleSearchDocs({ query: "xyznonexistent123" }, FIXTURES_PATH);
+    const result = await handleSearchDocs({ query: "xyznonexistent123" }, fixturesSource);
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toBe("No matches found.");
   });
 
   it("returns error for invalid regex", async () => {
-    const result = await handleSearchDocs({ query: "[invalid" }, FIXTURES_PATH);
+    const result = await handleSearchDocs({ query: "[invalid" }, fixturesSource);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Invalid regex pattern");
+  });
+
+  it("rejects ReDoS patterns with nested quantifiers", async () => {
+    const result = await handleSearchDocs({ query: "(a+)+" }, fixturesSource);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("unsafe regex");
+  });
+
+  it("rejects excessively long regex patterns", async () => {
+    const longPattern = "a".repeat(201);
+    const result = await handleSearchDocs({ query: longPattern }, fixturesSource);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("unsafe regex");
+  });
+
+  it("rejects path_pattern with traversal", async () => {
+    const result = await handleSearchDocs({ query: "test", path_pattern: "../../etc/" }, fixturesSource);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid path_pattern");
+  });
+
+  it("rejects path_pattern with dangerous glob metacharacters", async () => {
+    const result = await handleSearchDocs({ query: "test", path_pattern: "foo{bar,baz}" }, fixturesSource);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid path_pattern");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Security tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GitHubSource.resolvePath", () => {
+  const ref = parseGitHubUrl("https://github.com/owner/repo")!;
+  const ghSource = new GitHubSource(ref);
+
+  it("blocks bare '..'", () => {
+    expect(ghSource.resolvePath("..")).toBeNull();
+  });
+
+  it("blocks trailing '..' (foo/..)", () => {
+    expect(ghSource.resolvePath("foo/..")).toBeNull();
+  });
+
+  it("blocks deep traversal (a/b/../../..)", () => {
+    expect(ghSource.resolvePath("a/b/../../..")).toBeNull();
+  });
+
+  it("blocks null bytes", () => {
+    expect(ghSource.resolvePath("foo\0bar")).toBeNull();
+  });
+
+  it("blocks absolute paths", () => {
+    expect(ghSource.resolvePath("/etc/passwd")).toBeNull();
+  });
+
+  it("allows valid relative paths", () => {
+    expect(ghSource.resolvePath("docs/readme")).toBe("docs/readme.md");
+  });
+
+  it("normalizes backslashes", () => {
+    expect(ghSource.resolvePath("docs\\readme")).toBe("docs/readme.md");
+  });
+});
+
+describe("handleGetSubIndex security", () => {
+  it("rejects paths with glob metacharacters", async () => {
+    const result = await handleGetSubIndex({ path: "foo{bar}" }, fixturesSource);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid path");
+  });
+
+  it("rejects paths with traversal", async () => {
+    const result = await handleGetSubIndex({ path: "../../etc" }, fixturesSource);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid path");
   });
 });

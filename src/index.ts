@@ -12,8 +12,20 @@ import {
   handleGetFileToc,
   handleGetChapters,
   handleSearchDocs,
+} from "./markdown/handlers.js";
+import { MARKDOWN_TOOLS } from "./markdown/tools.js";
+import {
+  ApiDocIndex,
+  handleGetApiIndex,
+  handleGetApiType,
+  handleGetApiMember,
+  handleSearchApi,
   textResult,
-} from "./handlers.js";
+} from "./api/handlers.js";
+import { API_TOOLS } from "./api/tools.js";
+import { XmlDocParser } from "./api/parsers/xmldoc-parser.js";
+import { TypeDocParser } from "./api/parsers/typedoc-parser.js";
+import type { ApiDocParser } from "./api/types.js";
 import { createSource } from "./source.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,8 +35,11 @@ import { createSource } from "./source.js";
 function parseArgs(argv: string[]) {
   const args = argv.slice(2);
   let docsFolder: string | undefined;
+  let apiFolder: string | undefined;
   let name: string | undefined;
   let description: string | undefined;
+  let cacheDir: string | undefined;
+  let updateInterval: number | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -32,133 +47,52 @@ function parseArgs(argv: string[]) {
       name = args[++i];
     } else if (arg === "--description" && i + 1 < args.length) {
       description = args[++i];
+    } else if (arg === "--cache-dir" && i + 1 < args.length) {
+      cacheDir = args[++i];
+    } else if (arg === "--update-interval" && i + 1 < args.length) {
+      updateInterval = parseInt(args[++i]!, 10);
+    } else if (arg === "--api" && i + 1 < args.length) {
+      apiFolder = args[++i];
     } else if (!arg.startsWith("--")) {
       docsFolder = arg;
     }
   }
 
-  return { docsFolder, name, description };
+  return { docsFolder, apiFolder, name, description, cacheDir, updateInterval };
 }
 
-const { docsFolder, name, description } = parseArgs(process.argv);
-if (!docsFolder) {
+const { docsFolder, apiFolder, name, description, cacheDir, updateInterval } = parseArgs(process.argv);
+if (!docsFolder && !apiFolder) {
   console.error(
-    "Usage: markdown-mcp <docs-folder-or-github-url> [--name <name>] [--description <text>]"
+    "Usage: markdown-mcp [<docs-folder>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>]"
   );
   process.exit(1);
 }
 
-const source = createSource(docsFolder);
+const updateIntervalMs = updateInterval ? updateInterval * 60_000 : undefined;
 const SERVER_NAME = name ?? "markdown-mcp";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tool Definitions (JSON Schema for MCP protocol)
+// Source setup
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TOOLS: Tool[] = [
-  {
-    name: "get_doc_index",
-    description:
-      "Returns the top-level documentation index: root files and folder summaries with document counts. Use get_sub_index to drill into a specific folder.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: "get_sub_index",
-    description:
-      "Returns the documentation index for a specific folder/section. Lists files with titles and abstracts within that folder.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: {
-          type: "string",
-          description:
-            "Folder path to list (e.g., 'opcodes', 'tutorials', 'headers')",
-        },
-      },
-      required: ["path"],
-    },
-  },
-  {
-    name: "read_doc_file",
-    description: "Reads the full content of a documentation file.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        file_path: {
-          type: "string",
-          description:
-            "Relative path to the doc file (e.g., 'components/button.md')",
-        },
-      },
-      required: ["file_path"],
-    },
-  },
-  {
-    name: "get_file_toc",
-    description:
-      "Returns the Table of Contents (headings) of a file. Use this for large docs to find specific sections before reading them with get_chapters.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        file_path: {
-          type: "string",
-          description: "Path to the file",
-        },
-        include_abstracts: {
-          type: "boolean",
-          description:
-            "Include the first paragraph after each heading as an abstract (default: false)",
-        },
-      },
-      required: ["file_path"],
-    },
-  },
-  {
-    name: "get_chapters",
-    description:
-      "Returns the content of specific chapters (sections) from a doc file. Use after get_file_toc to read selected sections.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        file_path: {
-          type: "string",
-          description: "Path to the file",
-        },
-        headings: {
-          type: "array",
-          items: { type: "string" },
-          description:
-            "List of heading names to extract (e.g., ['Authentication', 'Error Handling'])",
-        },
-      },
-      required: ["file_path", "headings"],
-    },
-  },
-  {
-    name: "search_docs",
-    description:
-      "Search documentation using regex (case insensitive). Can be scoped using glob patterns.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Regex pattern to search for (case insensitive). Use '|' to search multiple terms (e.g. 'router.*link|anchor|r-a') — results are grouped per term.",
-        },
-        path_pattern: {
-          type: "string",
-          description:
-            "Glob pattern to filter files (e.g., 'api/**', 'components/*.md'). Defaults to '**/*.md'",
-        },
-      },
-      required: ["query"],
-    },
-  },
-];
+const mdSource = docsFolder ? createSource(docsFolder, cacheDir, updateIntervalMs) : null;
+const apiSource = apiFolder ? createSource(apiFolder, cacheDir, updateIntervalMs) : null;
+
+// Auto-detect API doc format and create index
+let apiIndex: ApiDocIndex | null = null;
+if (apiSource) {
+  const parsers: ApiDocParser[] = [new XmlDocParser(), new TypeDocParser()];
+  apiIndex = new ApiDocIndex(apiSource, parsers);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool Definitions
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOOLS: Tool[] = [];
+if (mdSource) TOOLS.push(...MARKDOWN_TOOLS);
+if (apiIndex) TOOLS.push(...API_TOOLS);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server Setup
@@ -176,31 +110,51 @@ mcpServer.server.setRequestHandler(ListToolsRequestSchema, async () => ({
 mcpServer.server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
-  switch (name) {
-    case "get_doc_index":
-      return handleGetDocIndex(source);
-    case "get_sub_index":
-      return handleGetSubIndex(args as { path: string }, source);
-    case "read_doc_file":
-      return handleReadDocFile(args as { file_path: string }, source);
-    case "get_file_toc":
-      return handleGetFileToc(
-        args as { file_path: string; include_abstracts?: boolean },
-        source
-      );
-    case "get_chapters":
-      return handleGetChapters(
-        args as { file_path: string; headings: string[] },
-        source
-      );
-    case "search_docs":
-      return handleSearchDocs(
-        args as { query: string; path_pattern?: string },
-        source
-      );
-    default:
-      return textResult(`Unknown tool: ${name}`, true);
+  // Markdown tools
+  if (mdSource) {
+    switch (name) {
+      case "get_doc_index":
+        return handleGetDocIndex(mdSource);
+      case "get_sub_index":
+        return handleGetSubIndex(args as { path: string }, mdSource);
+      case "read_doc_file":
+        return handleReadDocFile(args as { file_path: string }, mdSource);
+      case "get_file_toc":
+        return handleGetFileToc(
+          args as { file_path: string; include_abstracts?: boolean },
+          mdSource
+        );
+      case "get_chapters":
+        return handleGetChapters(
+          args as { file_path: string; headings: string[] },
+          mdSource
+        );
+      case "search_docs":
+        return handleSearchDocs(
+          args as { query: string; path_pattern?: string },
+          mdSource
+        );
+    }
   }
+
+  // API tools
+  if (apiIndex) {
+    switch (name) {
+      case "get_api_index":
+        return handleGetApiIndex(apiIndex);
+      case "get_api_type":
+        return handleGetApiType(args as { type_name: string }, apiIndex);
+      case "get_api_member":
+        return handleGetApiMember(
+          args as { type_name: string; member_name: string },
+          apiIndex
+        );
+      case "search_api":
+        return handleSearchApi(args as { query: string }, apiIndex);
+    }
+  }
+
+  return textResult(`Unknown tool: ${name}`, true);
 });
 
 const transport = new StdioServerTransport();

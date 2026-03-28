@@ -30,6 +30,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
     "fast-glob": "^3.3.3",
+    "fast-xml-parser": "^5.5.9",
     "micromatch": "^4.0.8"
   },
   "devDependencies": {
