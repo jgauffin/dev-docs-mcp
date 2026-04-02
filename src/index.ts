@@ -121,6 +121,7 @@ let mdSource: DocsSource | null = null;
 let apiIndex: ApiDocIndex | null = null;
 
 for (const src of sources) {
+  console.error(`[init] Setting up ${src.kind} source: ${src.type} ${src.origin}${src.folder ? ` (folder: ${src.folder})` : ""}`);
   const docsSource = createSourceFromConfig(src, cacheDir, updateIntervalMs);
   if (src.kind === "docs") {
     mdSource = docsSource;
@@ -137,6 +138,7 @@ for (const src of sources) {
 const TOOLS: Tool[] = [];
 if (mdSource) TOOLS.push(...MARKDOWN_TOOLS);
 if (apiIndex) TOOLS.push(...API_TOOLS);
+console.error(`[init] ${TOOLS.length} tools registered (docs: ${!!mdSource}, api: ${!!apiIndex})`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server Setup
@@ -153,6 +155,7 @@ mcpServer.server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 const handleCallTool = async (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
   const { name, arguments: args } = request.params;
+  console.error(`[tool] ${name} called`);
 
   // Markdown tools
   if (mdSource) {
@@ -217,6 +220,10 @@ if (port) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   app.post("/mcp", async (req: any, res: any) => {
+    const method = Array.isArray(req.body)
+      ? req.body.map((r: { method?: string }) => r.method).join(", ")
+      : req.body?.method ?? "unknown";
+    console.error(`[http] POST /mcp method=${method}`);
     const ip = getClientIp(req);
     if (!rateLimiter.allow(ip)) {
       res.status(429).json({

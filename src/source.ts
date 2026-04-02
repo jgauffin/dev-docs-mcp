@@ -171,6 +171,7 @@ export class GitHubSource implements DocsSource {
     if (this.fileListCache) return this.fileListCache;
 
     const url = `${this.apiBase}/git/trees/${this.ref.branch}?recursive=1`;
+    console.error(`[github] Fetching file tree from ${url}`);
     const res = await fetch(url, {
       headers: {
         Accept: "application/vnd.github+json",
@@ -201,6 +202,7 @@ export class GitHubSource implements DocsSource {
       files.push(rel);
     }
 
+    console.error(`[github] File tree loaded: ${files.length} files`);
     this.fileListCache = files;
     return files;
   }
@@ -216,6 +218,7 @@ export class GitHubSource implements DocsSource {
 
     const fullPath = this.fullPath(relativePath);
     const url = `${this.rawBase}/${fullPath}`;
+    console.error(`[github] Fetching file: ${relativePath}`);
     const res = await fetch(url, {
       headers: {
         "User-Agent": "markdown-mcp",
@@ -255,14 +258,16 @@ export class GitHubSource implements DocsSource {
 
 const LAST_UPDATED_FILE = ".last-updated";
 
+/** Shared clone promises keyed by cloneDir so multiple sources reuse one clone. */
+const pendingClones = new Map<string, Promise<void>>();
+
 export class GitCloneSource implements DocsSource {
   private readonly ref: GitHubRef;
   private readonly cloneDir: string;
   private readonly docsRoot: string;
   private readonly updateIntervalMs: number;
-  private ensured = false;
+  private ensurePromise: Promise<void> | null = null;
   private realRoot: string | null = null;
-
   constructor(ref: GitHubRef, cacheDir: string, updateIntervalMs: number) {
     this.ref = ref;
     // e.g. ~/.cache/markdown-mcp/owner/repo/branch
@@ -271,6 +276,10 @@ export class GitCloneSource implements DocsSource {
       ? path.join(this.cloneDir, ref.basePath)
       : this.cloneDir;
     this.updateIntervalMs = updateIntervalMs;
+
+    // Start cloning eagerly. On failure the promise stays rejected —
+    // all requests will fail and IIS will recycle the process.
+    this.ensureClone();
   }
 
   private cloneUrl(): string {
@@ -306,23 +315,40 @@ export class GitCloneSource implements DocsSource {
     await fs.writeFile(tsFile, String(Date.now()), "utf-8");
   }
 
-  private async ensureClone(): Promise<void> {
-    if (this.ensured) return;
+  private ensureClone(): Promise<void> {
+    if (!this.ensurePromise) {
+      // Share the clone promise across instances targeting the same directory
+      const existing = pendingClones.get(this.cloneDir);
+      if (existing) {
+        this.ensurePromise = existing;
+      } else {
+        const p = this.doEnsureClone().finally(() => pendingClones.delete(this.cloneDir));
+        pendingClones.set(this.cloneDir, p);
+        this.ensurePromise = p;
+      }
+    }
+    return this.ensurePromise;
+  }
 
+  private async doEnsureClone(): Promise<void> {
+    await resolveGitPath();
+    console.error(`[git-clone] Checking clone at ${this.cloneDir}`);
     if (await this.isCloned()) {
       if (await this.isStale()) {
-        console.error(`Updating cached clone: ${this.cloneDir}`);
+        console.error(`[git-clone] Cache stale, pulling updates: ${this.cloneDir}`);
         try {
-          await execFileAsync("git", ["-C", this.cloneDir, "pull", "--ff-only"]);
+          await gitExec(["-C", this.cloneDir, "pull", "--ff-only"]);
         } catch (err) {
-          console.error(`Git pull failed, using existing cache: ${err}`);
+          console.error(`[git-clone] Pull failed, using existing cache: ${err}`);
         }
         await this.writeTimestamp();
+      } else {
+        console.error(`[git-clone] Cache is fresh`);
       }
     } else {
-      console.error(`Cloning ${this.ref.owner}/${this.ref.repo}@${this.ref.branch} into ${this.cloneDir}`);
+      console.error(`[git-clone] Cloning ${this.ref.owner}/${this.ref.repo}@${this.ref.branch} into ${this.cloneDir}`);
       await fs.mkdir(this.cloneDir, { recursive: true });
-      await execFileAsync("git", [
+      await gitExec([
         "clone",
         "--depth", "1",
         "--branch", this.ref.branch,
@@ -333,7 +359,7 @@ export class GitCloneSource implements DocsSource {
       await this.writeTimestamp();
     }
 
-    this.ensured = true;
+    console.error(`[git-clone] Clone ready at ${this.cloneDir}`);
   }
 
   private async getRealRoot(): Promise<string> {
@@ -407,6 +433,38 @@ export function createSource(
     return new GitHubSource(ghRef);
   }
   return new FileSystemSource(path.resolve(docsFolder));
+}
+
+/** Well-known git paths on Windows, checked when git is not on PATH. */
+const GIT_CANDIDATES = [
+  "git",
+  "C:\\Program Files\\Git\\cmd\\git.exe",
+  "C:\\Program Files\\Git\\bin\\git.exe",
+  "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+];
+
+let resolvedGitPath: string | null = null;
+
+async function resolveGitPath(): Promise<string> {
+  if (resolvedGitPath) return resolvedGitPath;
+
+  for (const candidate of GIT_CANDIDATES) {
+    try {
+      await execFileAsync(candidate, ["--version"]);
+      resolvedGitPath = candidate;
+      console.error(`[git-clone] Using git: ${candidate}`);
+      return candidate;
+    } catch {
+      // try next
+    }
+  }
+
+  throw new Error("git not found (checked PATH and common install locations)");
+}
+
+function gitExec(args: string[]): ReturnType<typeof execFileAsync> {
+  if (!resolvedGitPath) throw new Error("git path not resolved yet");
+  return execFileAsync(resolvedGitPath, args);
 }
 
 export function createSourceFromConfig(

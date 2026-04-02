@@ -52,20 +52,25 @@ export class ApiDocIndex {
   async getNamespaces(): Promise<ApiNamespace[]> {
     if (this.namespaces) return this.namespaces;
 
+    console.error(`[api-index] Building API index...`);
     const allNs: ApiNamespace[] = [];
     for (const parser of this.parsers) {
       const files = await this.source.listFiles(parser.filePattern);
+      console.error(`[api-index] Parser ${parser.filePattern}: ${files.length} files`);
       for (const file of files) {
         try {
           const content = await this.source.readFile(file);
-          allNs.push(...parser.parse(content, file));
-        } catch {
-          // skip files that can't be read or parsed
+          const parsed = parser.parse(content, file);
+          allNs.push(...parsed);
+          console.error(`[api-index] Parsed ${file}: ${parsed.length} namespaces`);
+        } catch (err) {
+          console.error(`[api-index] Failed to parse ${file}: ${err}`);
         }
       }
     }
 
     this.namespaces = mergeNamespaces(allNs);
+    console.error(`[api-index] Index built: ${this.namespaces.length} namespaces, ${this.namespaces.reduce((s, n) => s + n.types.length, 0)} types`);
     return this.namespaces;
   }
 
