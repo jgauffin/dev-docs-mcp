@@ -1,0 +1,45 @@
+{
+  "name": "dev-docs",
+  "description": "Documentation server hosting multiple libraries",
+  "cacheDir": "./cache",
+  "updateInterval": 30,
+  "libraries": [
+    {
+      "name": "relaxjs",
+      "description": "Lightweight JavaScript framework for streamlined UIs",
+      "sources": [
+        {
+          "type": "github",
+          "origin": "https://github.com/user/relaxjs",
+          "kind": "docs",
+          "folder": "docs"
+        },
+        {
+          "type": "github",
+          "origin": "https://github.com/user/relaxjs",
+          "kind": "api",
+          "folder": "api"
+        }
+      ]
+    },
+    {
+      "name": "petstore",
+      "description": "Petstore OpenAPI spec (example)",
+      "sources": [
+        {
+          "type": "disk",
+          "origin": "./schemas/petstore",
+          "kind": "schema"
+        }
+      ]
+    },
+    {
+      "name": "mylib-local",
+      "description": "Local checkout of MyLib — docs and C# XML API comments",
+      "sources": [
+        { "type": "disk", "origin": "./mylib/docs", "kind": "docs" },
+        { "type": "disk", "origin": "./mylib/bin/Release", "kind": "api" }
+      ]
+    }
+  ]
+}

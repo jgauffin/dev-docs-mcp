@@ -1,0 +1,30 @@
+{
+  "title": "User Schema",
+  "description": "Schema for user accounts",
+  "definitions": {
+    "User": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "UserAddress": {
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" }
+      }
+    },
+    "Preferences": {
+      "type": "object",
+      "properties": {
+        "theme": { "type": "string", "enum": ["light", "dark"] },
+        "emailNotifications": { "type": "boolean" }
+      }
+    }
+  }
+}

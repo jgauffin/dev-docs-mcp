@@ -411,7 +411,7 @@ export interface SourceConfig {
   /** Local path or GitHub URL. */
   origin: string;
   /** What the source provides. */
-  kind: "docs" | "api";
+  kind: "docs" | "api" | "schema";
   /** Subfolder within the origin (especially useful for GitHub repos). */
   folder?: string;
 }
