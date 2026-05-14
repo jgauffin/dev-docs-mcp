@@ -1,7 +1,7 @@
 {
-  "name": "markdown-mcp",
+  "name": "docs-mcp",
   "version": "1.0.0",
-  "description": "MCP server for browsing and searching Markdown documentation",
+  "description": "MCP server that exposes Markdown documentation, API reference, and JSON Schema / OpenAPI specs to AI agents",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -9,7 +9,7 @@
   },
   "files": [
     "dist",
-    "ReadMe.md"
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -24,10 +24,13 @@
     "mcp",
     "markdown",
     "documentation",
+    "api-reference",
+    "openapi",
+    "json-schema",
     "model-context-protocol"
   ],
   "author": "jgauffin",
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
     "fast-glob": "^3.3.3",

@@ -1,6 +1,6 @@
 # Docs MCP Server
 
-An MCP (Model Context Protocol) server that exposes **Markdown documentation**, **API reference** (C# XML-doc / TypeDoc), and **JSON Schema / OpenAPI** specs to AI agents — from local folders or GitHub repositories.
+An MCP (Model Context Protocol) server that exposes **Markdown documentation**, **API reference** (C# XML-doc / TypeDoc), and **JSON Schema / OpenAPI** specs to AI agents. From local folders or GitHub repositories.
 
 A single server instance can host **multiple libraries/frameworks** side-by-side, each with its own sources. The AI picks which library to query via a `library` parameter, discoverable through the `list_libraries` tool.
 
@@ -39,4 +39,4 @@ See [`sample-config.json`](sample-config.json) for a complete multi-library exam
 
 ## License
 
-Apache-2.0
+AGPL
