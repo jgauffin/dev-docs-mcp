@@ -1,16 +1,27 @@
 {
-  "name": "docs-mcp",
+  "name": "docs-mcpserver",
   "version": "1.0.0",
   "description": "MCP server that exposes Markdown documentation, API reference, and JSON Schema / OpenAPI specs to AI agents",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "markdown-mcp": "dist/index.js"
+    "docs-mcpserver": "dist/index.js"
   },
   "files": [
-    "dist",
-    "README.md"
+    "dist/**/*.js",
+    "!dist/bundle.js"
   ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgauffin/markdown-docs-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jgauffin/markdown-docs-mcp/issues"
+  },
+  "homepage": "https://github.com/jgauffin/markdown-docs-mcp#readme",
   "scripts": {
     "build": "tsc",
     "bundle": "tsc && esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/bundle.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",

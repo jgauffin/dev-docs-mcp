@@ -22,10 +22,10 @@ npm install
 npm run build
 
 # Single library
-markdown-mcp ./docs --name "My Docs"
+docs-mcpserver ./docs --name "My Docs"
 
 # Multi-library
-markdown-mcp --config dev-docs.json
+docs-mcpserver --config dev-docs.json
 ```
 
 See [`sample-config.json`](sample-config.json) for a complete multi-library example.

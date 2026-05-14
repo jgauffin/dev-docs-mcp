@@ -12,19 +12,19 @@ npm run build
 Single library, local folder:
 
 ```bash
-markdown-mcp ./docs --name "My Docs"
+docs-mcpserver ./docs --name "My Docs"
 ```
 
 GitHub repository:
 
 ```bash
-markdown-mcp https://github.com/user/my-project/tree/main/docs --name "My Project"
+docs-mcpserver https://github.com/user/my-project/tree/main/docs --name "My Project"
 ```
 
 Multi-library via config file:
 
 ```bash
-markdown-mcp --config dev-docs.json
+docs-mcpserver --config dev-docs.json
 ```
 
 See [configuration.md](configuration.md) for the full config schema, or [`sample-config.json`](../sample-config.json) for a complete example.
@@ -32,7 +32,7 @@ See [configuration.md](configuration.md) for the full config schema, or [`sample
 ## CLI reference
 
 ```bash
-markdown-mcp <docs-folder-or-github-url> [options]
+docs-mcpserver <docs-folder-or-github-url> [options]
 ```
 
 | Option | Description |

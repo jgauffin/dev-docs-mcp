@@ -94,7 +94,7 @@ For private repositories, set the `GITHUB_TOKEN` environment variable.
 The old single-library shape still works — it's promoted internally to one implicit library:
 
 ```bash
-markdown-mcp ./docs --api ./api-docs --name "MyLib"
+docs-mcpserver ./docs --api ./api-docs --name "MyLib"
 ```
 
 ```json
