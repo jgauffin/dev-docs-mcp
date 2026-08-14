@@ -146,7 +146,7 @@ function validateLibraryName(libName: string): void {
 const libraryConfigs = resolveLibraries(config);
 if (libraryConfigs.length === 0) {
   console.error(
-    "Usage: markdown-mcp [<docs-folder>] [--config <file>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>] [--port <port>]",
+    "Usage: docs-mcpserver [<docs-folder>] [--config <file>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>] [--port <port>]",
   );
   process.exit(1);
 }
@@ -204,7 +204,7 @@ const singleLibrary = libraryList.length === 1 ? libraryList[0]! : null;
 // Server name / description
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SERVER_NAME = name ?? "markdown-mcp";
+const SERVER_NAME = name ?? "docs-mcpserver";
 
 function buildServerDescription(): string {
   const summaries = libraryList.map((l) =>

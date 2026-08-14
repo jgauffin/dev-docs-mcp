@@ -3,7 +3,7 @@
 By default the server uses stdio, which is what MCP clients like Claude Code and Claude Desktop expect. To expose the server over HTTP instead (e.g. behind a reverse proxy or for multi-user access), add `--port`:
 
 ```bash
-markdown-mcp --config dev-docs.json --port 3000
+docs-mcpserver --config dev-docs.json --port 3000
 ```
 
 The server listens on `http://0.0.0.0:<port>/mcp` using the MCP [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) transport. Clients connect by pointing their MCP HTTP configuration at that URL.

@@ -28,6 +28,13 @@ Parses **C# XML documentation comments** (`*.xml`) and **TypeDoc JSON** (`*.json
 | `get_api_member` | Detailed docs for one member (parameters, returns, exceptions, examples) |
 | `search_api` | Regex search across type names, member names, signatures, and summaries |
 
+### Generating API input
+
+The `api` pipeline does not read source code — it consumes a generated documentation file:
+
+- **TypeScript / JavaScript** — use TypeDoc's built-in JSON serializer: `typedoc --json api.json src/index.ts`. Point the source at the resulting `.json` file. The markdown output from `typedoc-plugin-markdown` is **not** supported — it must be the JSON serializer output (a TypeDoc project document).
+- **C#** — enable XML documentation output in the project (`<GenerateDocumentationFile>true</GenerateDocumentationFile>`) and point the source at the generated `*.xml` file (or the build output folder containing it).
+
 ## JSON Schema / OpenAPI — `kind: "schema"`
 
 Indexes **JSON Schema** (draft 6+), **OpenAPI 3.x**, and **Swagger 2.0** files. For OpenAPI specs, path operations are exposed as definitions named like `GET /pets`.
