@@ -1,5 +1,5 @@
 import type { DocsSource } from "../source.js";
-import { indexSchemas, searchInSchema } from "./lib.js";
+import { indexSchemas, searchInSchema, SCHEMA_FILE_PATTERN } from "./lib.js";
 import type { IndexedSchema, SearchHit } from "./types.js";
 import { textResult, type ToolResult } from "../api/handlers.js";
 
@@ -9,13 +9,21 @@ import { textResult, type ToolResult } from "../api/handlers.js";
 
 export class SchemaIndex {
   private cache: Map<string, IndexedSchema> | null = null;
+  private stamp: string | null = null;
 
   constructor(private readonly source: DocsSource) {}
 
   async get(): Promise<Map<string, IndexedSchema>> {
-    if (this.cache) return this.cache;
-    console.error(`[schema-index] Building schema index...`);
+    const stamp = await this.source.getChangeStamp(SCHEMA_FILE_PATTERN);
+    if (this.cache && stamp === this.stamp) return this.cache;
+
+    console.error(
+      this.cache
+        ? `[schema-index] Schemas changed, rebuilding index...`
+        : `[schema-index] Building schema index...`,
+    );
     this.cache = await indexSchemas(this.source);
+    this.stamp = stamp;
     console.error(`[schema-index] Indexed ${this.cache.size} schemas`);
     return this.cache;
   }
