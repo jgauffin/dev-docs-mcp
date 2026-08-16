@@ -22,6 +22,13 @@ export interface DocsSource {
   readFile(relativePath: string): Promise<string>;
 
   /**
+   * A value that changes whenever any file matching the pattern is added,
+   * edited, or removed. Callers that cache derived data compare stamps to
+   * decide whether the cache still reflects the published documentation.
+   */
+  getChangeStamp(pattern: string | string[]): Promise<string>;
+
+  /**
    * Validate that a relative path is safe (no traversal). Returns normalized path or null.
    * @param appendExtension Extension to append if missing (default ".md"), or false to skip.
    */
@@ -53,6 +60,26 @@ function safeRelativePath(inputPath: string, appendExtension: string | false = "
   if (appendExtension && !result.endsWith(appendExtension)) result += appendExtension;
 
   return result;
+}
+
+/**
+ * Build a change stamp from the name, size, and modification time of every
+ * matching file. Any add, edit, or delete changes the resulting string.
+ */
+async function stampFromDisk(root: string, pattern: string | string[]): Promise<string> {
+  const files = (await glob(pattern, { cwd: root })).sort();
+
+  const parts: string[] = [];
+  for (const file of files) {
+    try {
+      const stat = await fs.stat(path.join(root, file));
+      parts.push(`${file}:${stat.size}:${stat.mtimeMs}`);
+    } catch {
+      // Removed between listing and stat — the next stamp picks it up.
+    }
+  }
+
+  return parts.join("|");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,6 +121,10 @@ export class FileSystemSource implements DocsSource {
     }
 
     return fs.readFile(realPath, "utf-8");
+  }
+
+  async getChangeStamp(pattern: string | string[]): Promise<string> {
+    return stampFromDisk(this.root, pattern);
   }
 
   resolvePath(inputPath: string, appendExtension: string | false = ".md"): string | null {
@@ -141,13 +172,24 @@ export function parseGitHubUrl(url: string): GitHubRef | null {
   };
 }
 
+/** How long GitHub responses are reused before being re-fetched (5 minutes). */
+export const GITHUB_CACHE_TTL_MS = 5 * 60_000;
+
 export class GitHubSource implements DocsSource {
   private readonly ref: GitHubRef;
+  private readonly ttlMs: number;
   private fileListCache: string[] | null = null;
-  private fileContentCache = new Map<string, string>();
+  private fileListFetchedAt = 0;
+  private fileContentCache = new Map<string, { content: string; fetchedAt: number }>();
 
-  constructor(ref: GitHubRef) {
+  constructor(ref: GitHubRef, ttlMs: number = GITHUB_CACHE_TTL_MS) {
     this.ref = ref;
+    this.ttlMs = ttlMs;
+  }
+
+  /** True when a value fetched at the given time may still be served. */
+  private isFresh(fetchedAt: number): boolean {
+    return Date.now() - fetchedAt < this.ttlMs;
   }
 
   private get rawBase(): string {
@@ -168,7 +210,7 @@ export class GitHubSource implements DocsSource {
 
   /** Fetch the recursive file tree from GitHub and filter to our basePath. */
   private async fetchFileList(): Promise<string[]> {
-    if (this.fileListCache) return this.fileListCache;
+    if (this.fileListCache && this.isFresh(this.fileListFetchedAt)) return this.fileListCache;
 
     const url = `${this.apiBase}/git/trees/${this.ref.branch}?recursive=1`;
     console.error(`[github] Fetching file tree from ${url}`);
@@ -204,6 +246,7 @@ export class GitHubSource implements DocsSource {
 
     console.error(`[github] File tree loaded: ${files.length} files`);
     this.fileListCache = files;
+    this.fileListFetchedAt = Date.now();
     return files;
   }
 
@@ -214,7 +257,7 @@ export class GitHubSource implements DocsSource {
 
   async readFile(relativePath: string): Promise<string> {
     const cached = this.fileContentCache.get(relativePath);
-    if (cached !== undefined) return cached;
+    if (cached && this.isFresh(cached.fetchedAt)) return cached.content;
 
     const fullPath = this.fullPath(relativePath);
     const url = `${this.rawBase}/${fullPath}`;
@@ -243,8 +286,36 @@ export class GitHubSource implements DocsSource {
       throw new Error("File too large");
     }
 
-    this.fileContentCache.set(relativePath, content);
+    this.fileContentCache.set(relativePath, { content, fetchedAt: Date.now() });
     return content;
+  }
+
+  /**
+   * The branch head commit, which changes whenever documentation is published.
+   * Falls back to a time bucket if the commit cannot be read, so a rebuild is
+   * still attempted once per TTL rather than never.
+   */
+  async getChangeStamp(): Promise<string> {
+    const url = `${this.apiBase}/commits/${this.ref.branch}`;
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "markdown-mcp",
+          ...(process.env.GITHUB_TOKEN
+            ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+            : {}),
+        },
+      });
+      if (!res.ok) throw new Error(`GitHub API error (${res.status})`);
+
+      const data = (await res.json()) as { sha?: string };
+      if (data.sha) return data.sha;
+      throw new Error("commit response had no sha");
+    } catch (err) {
+      console.error(`[github] Could not read branch head, falling back to time bucket: ${err}`);
+      return `time:${Math.floor(Date.now() / this.ttlMs)}`;
+    }
   }
 
   resolvePath(inputPath: string, appendExtension: string | false = ".md"): string | null {
@@ -267,6 +338,7 @@ export class GitCloneSource implements DocsSource {
   private readonly docsRoot: string;
   private readonly updateIntervalMs: number;
   private ensurePromise: Promise<void> | null = null;
+  private lastCheckedAt = 0;
   private realRoot: string | null = null;
   constructor(ref: GitHubRef, cacheDir: string, updateIntervalMs: number) {
     this.ref = ref;
@@ -277,9 +349,9 @@ export class GitCloneSource implements DocsSource {
       : this.cloneDir;
     this.updateIntervalMs = updateIntervalMs;
 
-    // Start cloning eagerly. On failure the promise stays rejected —
-    // all requests will fail and IIS will recycle the process.
-    this.ensureClone();
+    // Start cloning eagerly so the first request does not pay for it. A
+    // failure is reported to the request that needs the clone, not here.
+    this.ensureClone().catch(() => {});
   }
 
   private cloneUrl(): string {
@@ -316,13 +388,26 @@ export class GitCloneSource implements DocsSource {
   }
 
   private ensureClone(): Promise<void> {
+    // Release the completed check once the interval has elapsed so the next
+    // request re-evaluates staleness and pulls newly published documentation.
+    if (this.ensurePromise && Date.now() - this.lastCheckedAt >= this.updateIntervalMs) {
+      this.ensurePromise = null;
+    }
+
     if (!this.ensurePromise) {
       // Share the clone promise across instances targeting the same directory
       const existing = pendingClones.get(this.cloneDir);
       if (existing) {
         this.ensurePromise = existing;
       } else {
-        const p = this.doEnsureClone().finally(() => pendingClones.delete(this.cloneDir));
+        this.lastCheckedAt = Date.now();
+        const p = this.doEnsureClone()
+          .catch((err) => {
+            // Do not cache the failure — let the next request retry.
+            if (this.ensurePromise === p) this.ensurePromise = null;
+            throw err;
+          })
+          .finally(() => pendingClones.delete(this.cloneDir));
         pendingClones.set(this.cloneDir, p);
         this.ensurePromise = p;
       }
@@ -394,6 +479,11 @@ export class GitCloneSource implements DocsSource {
     }
 
     return fs.readFile(realPath, "utf-8");
+  }
+
+  async getChangeStamp(pattern: string | string[]): Promise<string> {
+    await this.ensureClone();
+    return stampFromDisk(this.docsRoot, pattern);
   }
 
   resolvePath(inputPath: string, appendExtension: string | false = ".md"): string | null {

@@ -108,12 +108,15 @@ function basename(filePath: string): string {
   return name.endsWith(".json") ? name.slice(0, -5) : name;
 }
 
+/** Files considered when indexing schemas. */
+export const SCHEMA_FILE_PATTERN = "**/*.json";
+
 /** Index all .json files from a DocsSource that match a JSON Schema / OpenAPI format. */
 export async function indexSchemas(
   source: DocsSource,
 ): Promise<Map<string, IndexedSchema>> {
   const index = new Map<string, IndexedSchema>();
-  const files = await source.listFiles("**/*.json");
+  const files = await source.listFiles(SCHEMA_FILE_PATTERN);
 
   for (const file of files) {
     let parsed: Record<string, unknown>;

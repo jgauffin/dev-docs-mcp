@@ -43,16 +43,31 @@ export function textResult(text: string, isError = false): ToolResult {
 
 export class ApiDocIndex {
   private namespaces: ApiNamespace[] | null = null;
+  private stamp: string | null = null;
 
   constructor(
     private source: DocsSource,
     private parsers: ApiDocParser[]
   ) {}
 
-  async getNamespaces(): Promise<ApiNamespace[]> {
-    if (this.namespaces) return this.namespaces;
+  /** Combined change stamp of every file the parsers read. */
+  private async currentStamp(): Promise<string> {
+    const stamps: string[] = [];
+    for (const parser of this.parsers) {
+      stamps.push(await this.source.getChangeStamp(parser.filePattern));
+    }
+    return stamps.join("||");
+  }
 
-    console.error(`[api-index] Building API index...`);
+  async getNamespaces(): Promise<ApiNamespace[]> {
+    const stamp = await this.currentStamp();
+    if (this.namespaces && stamp === this.stamp) return this.namespaces;
+
+    console.error(
+      this.namespaces
+        ? `[api-index] API docs changed, rebuilding index...`
+        : `[api-index] Building API index...`,
+    );
     const allNs: ApiNamespace[] = [];
     for (const parser of this.parsers) {
       const files = await this.source.listFiles(parser.filePattern);
@@ -70,6 +85,7 @@ export class ApiDocIndex {
     }
 
     this.namespaces = mergeNamespaces(allNs);
+    this.stamp = stamp;
     console.error(`[api-index] Index built: ${this.namespaces.length} namespaces, ${this.namespaces.reduce((s, n) => s + n.types.length, 0)} types`);
     return this.namespaces;
   }
