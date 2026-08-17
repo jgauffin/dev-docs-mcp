@@ -2,8 +2,10 @@ import fs from "fs/promises";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import https from "https";
 import glob from "fast-glob";
 import micromatch from "micromatch";
+import { detectFormat } from "./schema/lib.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -174,6 +176,14 @@ export function parseGitHubUrl(url: string): GitHubRef | null {
 
 /** How long GitHub responses are reused before being re-fetched (5 minutes). */
 export const GITHUB_CACHE_TTL_MS = 5 * 60_000;
+
+/**
+ * How often a cloned GitHub repository is pulled when no updateInterval is
+ * configured (30 minutes). Deliberately slow: these are external resources
+ * that should not be polled hard. Specs published by a local service use the
+ * much shorter URL_REFRESH_INTERVAL_MS instead.
+ */
+export const GIT_UPDATE_INTERVAL_MS = 30 * 60_000;
 
 export class GitHubSource implements DocsSource {
   private readonly ref: GitHubRef;
@@ -492,18 +502,336 @@ export class GitCloneSource implements DocsSource {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// UrlSource
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a spec fetched from a service is served before the next request
+ * triggers a background re-fetch (10 seconds). Short enough that a spec being
+ * edited right now shows up almost immediately, long enough that an agent
+ * working through many tool calls does not flood the service.
+ */
+export const URL_REFRESH_INTERVAL_MS = 10_000;
+
+/** How long a service is given to answer before the fetch is abandoned. */
+const URL_FETCH_TIMEOUT_MS = 5_000;
+
+/** Strip everything that could give a file name meaning to the file system. */
+function sanitizeForFileName(value: string): string {
+  const cleaned = value.replace(/[^A-Za-z0-9_.-]/g, "-").replace(/^\.+/, "");
+  return cleaned || "spec";
+}
+
+/**
+ * Derive a schema name from a spec URL, used when no name is configured.
+ * "https://host:5001/openapi/v1.json" becomes "v1".
+ */
+export function schemaNameFromUrl(url: string): string {
+  const withoutQuery = url.split(/[?#]/)[0]!;
+  const lastSegment = withoutQuery.split("/").filter(Boolean).pop() ?? "spec";
+  const withoutExtension = lastSegment.replace(/\.(json|ya?ml)$/i, "");
+  return sanitizeForFileName(withoutExtension);
+}
+
+/**
+ * A schema published by a running service over HTTP.
+ *
+ * The spec is cached on disk so it stays available while the service is down —
+ * which is the normal state for a service that is only started when worked on.
+ * Requests are always answered from the cache; the fetch that keeps the cache
+ * current runs in the background and its failures are logged, never raised.
+ */
+export class UrlSource implements DocsSource {
+  /** Absolute path of the cached spec. Exposed so callers can report it. */
+  readonly cacheFilePath: string;
+
+  private readonly cacheFolder: string;
+  private readonly relativePath: string;
+  private readonly disk: FileSystemSource;
+  private refreshPromise: Promise<void> | null = null;
+
+  constructor(
+    private readonly url: string,
+    cacheDir: string,
+    schemaName: string,
+    private readonly refreshIntervalMs: number = URL_REFRESH_INTERVAL_MS,
+    private readonly allowSelfSignedCertificate: boolean = false,
+  ) {
+    // One folder per service so several services can each cache a "v1.json".
+    this.cacheFolder = path.join(cacheDir, "url", sanitizeForFileName(hostOf(url)));
+    this.relativePath = `${sanitizeForFileName(schemaName)}.json`;
+    this.cacheFilePath = path.join(this.cacheFolder, this.relativePath);
+    this.disk = new FileSystemSource(this.cacheFolder);
+
+    // Fetch eagerly so the spec is current by the time the first request
+    // arrives. A service that is down is reported, not fatal.
+    this.refresh().catch(() => {});
+  }
+
+  /**
+   * Bring the cached spec up to date. Does nothing when a fetch is already in
+   * flight or the cache is younger than the refresh interval.
+   */
+  refresh(): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise;
+
+    // Claim the slot synchronously. Awaiting the staleness check first would
+    // let requests that arrive together each start their own fetch.
+    const p = this.refreshIfStale().finally(() => {
+      if (this.refreshPromise === p) this.refreshPromise = null;
+    });
+    this.refreshPromise = p;
+    return p;
+  }
+
+  private async refreshIfStale(): Promise<void> {
+    if (!(await this.isStale())) return;
+    await this.fetchSpec();
+  }
+
+  private async isStale(): Promise<boolean> {
+    try {
+      const stat = await fs.stat(this.cacheFilePath);
+      return Date.now() - stat.mtimeMs >= this.refreshIntervalMs;
+    } catch {
+      return true; // Never fetched — always worth trying.
+    }
+  }
+
+  private async isCached(): Promise<boolean> {
+    try {
+      await fs.access(this.cacheFilePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Fetch, validate, and store the spec. Reports problems without throwing. */
+  private async fetchSpec(): Promise<void> {
+    try {
+      console.error(`[url] Fetching spec: ${this.url}`);
+      const res = await this.get();
+
+      if (res.status < 200 || res.status >= 300) {
+        console.error(`[url] ${this.url} answered ${res.status}, keeping cached spec`);
+        return;
+      }
+
+      const body = res.body;
+      if (body.length > MAX_FILE_SIZE) {
+        console.error(`[url] ${this.url} spec is too large, keeping cached spec`);
+        return;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        console.error(
+          `[url] ${this.url} did not answer with JSON — YAML specs are not supported. Keeping cached spec.`,
+        );
+        return;
+      }
+
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        console.error(`[url] ${this.url} did not answer with a schema, keeping cached spec`);
+        return;
+      }
+
+      if (!detectFormat(parsed as Record<string, unknown>)) {
+        console.error(
+          `[url] ${this.url} is not a recognised OpenAPI or JSON Schema document, keeping cached spec`,
+        );
+        return;
+      }
+
+      await this.writeSpec(body);
+      console.error(`[url] Cached spec at ${this.cacheFilePath}`);
+    } catch (err) {
+      console.error(`[url] Could not fetch ${this.url}, keeping cached spec: ${describeFetchError(err)}`);
+    }
+  }
+
+  /**
+   * Request the spec.
+   *
+   * A service running locally over HTTPS normally presents a development
+   * certificate that no trust store accepts. Such a source is fetched through
+   * the https module, which can waive verification for this one request —
+   * unlike fetch, whose trust settings are process wide. Everything else goes
+   * through fetch with verification fully intact.
+   */
+  private async get(): Promise<{ status: number; body: string }> {
+    if (!this.allowSelfSignedCertificate) {
+      const res = await fetch(this.url, {
+        headers: { Accept: "application/json", "User-Agent": "markdown-mcp" },
+        signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
+      });
+      return { status: res.status, body: await res.text() };
+    }
+    return httpsGetAllowingUntrustedCertificate(this.url);
+  }
+
+  /** Write via a temp file so a reader never sees a half-written spec. */
+  private async writeSpec(body: string): Promise<void> {
+    await fs.mkdir(this.cacheFolder, { recursive: true });
+    const tmp = `${this.cacheFilePath}.tmp`;
+    await fs.writeFile(tmp, body, "utf-8");
+    await fs.rename(tmp, this.cacheFilePath);
+  }
+
+  /**
+   * Start a refresh without blocking the caller, so a tool call never waits on
+   * a service. The exception is a cold start with nothing cached at all: then
+   * the caller waits, because an empty answer would be worse than a short wait.
+   */
+  private async ensureSpec(): Promise<void> {
+    if (await this.isCached()) {
+      this.refresh().catch(() => {});
+      return;
+    }
+    await this.refresh().catch(() => {});
+  }
+
+  async listFiles(pattern: string | string[]): Promise<string[]> {
+    await this.ensureSpec();
+    if (!(await this.isCached())) return [];
+    return this.disk.listFiles(pattern);
+  }
+
+  async readFile(relativePath: string): Promise<string> {
+    await this.ensureSpec();
+    return this.disk.readFile(relativePath);
+  }
+
+  async getChangeStamp(pattern: string | string[]): Promise<string> {
+    await this.ensureSpec();
+    if (!(await this.isCached())) return "";
+    return this.disk.getChangeStamp(pattern);
+  }
+
+  resolvePath(inputPath: string, appendExtension: string | false = ".md"): string | null {
+    return safeRelativePath(inputPath, appendExtension);
+  }
+}
+
+/**
+ * Fetch a URL over HTTPS without verifying the certificate, for a service that
+ * presents a development certificate. Scoped to this single request so the
+ * trust settings of every other request are unaffected. Enforces the same size
+ * limit as the rest of the server by abandoning an oversized response.
+ */
+function httpsGetAllowingUntrustedCertificate(
+  url: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      url,
+      {
+        rejectUnauthorized: false,
+        headers: { Accept: "application/json", "User-Agent": "markdown-mcp" },
+        timeout: URL_FETCH_TIMEOUT_MS,
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf-8");
+        res.on("data", (chunk: string) => {
+          body += chunk;
+          if (body.length > MAX_FILE_SIZE) {
+            req.destroy(new Error("spec exceeds the maximum size"));
+          }
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+
+    req.on("timeout", () => req.destroy(Object.assign(new Error("timed out"), { name: "TimeoutError" })));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+/** Certificate problems a locally running service typically causes. */
+const CERTIFICATE_ERROR_CODES = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "CERT_HAS_EXPIRED",
+]);
+
+/**
+ * Explain a failed fetch in terms the reader can act on. Node reports every
+ * transport problem as "fetch failed", which hides whether the service is down
+ * or simply presenting a development certificate.
+ */
+function describeFetchError(err: unknown): string {
+  // fetch buries the transport error in `cause`; the https module raises it directly.
+  const error = err as { code?: string; cause?: { code?: string } };
+  const code = error?.code ?? error?.cause?.code;
+
+  if (code && CERTIFICATE_ERROR_CODES.has(code)) {
+    return (
+      `${code} — the service presented a certificate that is not trusted. ` +
+      `If this is your own service running locally, add "allowSelfSignedCertificate": true to the source.`
+    );
+  }
+  if (code === "ECONNREFUSED") return "ECONNREFUSED — nothing is listening, the service is not running";
+  if ((err as { name?: string })?.name === "TimeoutError") return "the service did not answer in time";
+  if (code) return `${code}`;
+  return String(err);
+}
+
+/**
+ * True when a URL points at this machine. Services running locally over HTTPS
+ * present a development certificate, so verification is relaxed for them by
+ * default. A spec served from anywhere else must present a valid certificate
+ * unless the source opts out explicitly.
+ */
+export function isLocalhost(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+/** The host of a URL, or a placeholder when it cannot be parsed. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || "unknown-host";
+  } catch {
+    return "unknown-host";
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Source config
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SourceConfig {
-  /** "disk" for local directories, "github" for GitHub repositories. */
-  type: "disk" | "github";
-  /** Local path or GitHub URL. */
+  /**
+   * "disk" for local directories, "github" for GitHub repositories,
+   * "url" for a spec published over HTTP by a running service.
+   */
+  type: "disk" | "github" | "url";
+  /** Local path, GitHub URL, or spec URL. */
   origin: string;
   /** What the source provides. */
   kind: "docs" | "api" | "schema";
   /** Subfolder within the origin (especially useful for GitHub repos). */
   folder?: string;
+  /** Schema name for a url source. Defaults to the last URL path segment. */
+  name?: string;
+  /** Seconds before a url source re-fetches its spec. Defaults to 10. */
+  refreshInterval?: number;
+  /**
+   * Accept an untrusted TLS certificate from this url source. Needed for a
+   * service running locally over HTTPS with a development certificate.
+   */
+  allowSelfSignedCertificate?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -518,7 +846,7 @@ export function createSource(
   const ghRef = parseGitHubUrl(docsFolder);
   if (ghRef) {
     if (cacheDir) {
-      return new GitCloneSource(ghRef, cacheDir, updateIntervalMs ?? 60 * 60_000);
+      return new GitCloneSource(ghRef, cacheDir, updateIntervalMs ?? GIT_UPDATE_INTERVAL_MS);
     }
     return new GitHubSource(ghRef);
   }
@@ -561,7 +889,26 @@ export function createSourceFromConfig(
   source: SourceConfig,
   cacheDir?: string,
   updateIntervalMs?: number,
+  refreshIntervalMs?: number,
 ): DocsSource {
+  if (source.type === "url") {
+    if (!cacheDir) {
+      throw new Error(
+        `Source "${source.origin}" is fetched over HTTP and must be cached on disk. ` +
+          `Configure "cacheDir" (or --cache-dir) to enable url sources.`,
+      );
+    }
+    return new UrlSource(
+      source.origin,
+      cacheDir,
+      source.name ?? schemaNameFromUrl(source.origin),
+      source.refreshInterval !== undefined
+        ? source.refreshInterval * 1_000
+        : refreshIntervalMs ?? URL_REFRESH_INTERVAL_MS,
+      source.allowSelfSignedCertificate ?? isLocalhost(source.origin),
+    );
+  }
+
   if (source.type === "github") {
     const ghRef = parseGitHubUrl(source.origin);
     if (!ghRef) throw new Error(`Invalid GitHub URL: ${source.origin}`);
@@ -574,7 +921,7 @@ export function createSourceFromConfig(
     }
 
     if (cacheDir) {
-      return new GitCloneSource(ghRef, cacheDir, updateIntervalMs ?? 60 * 60_000);
+      return new GitCloneSource(ghRef, cacheDir, updateIntervalMs ?? GIT_UPDATE_INTERVAL_MS);
     }
     return new GitHubSource(ghRef);
   }
