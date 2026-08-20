@@ -41,6 +41,15 @@ import {
   handleSearchAllSchemas,
 } from "./schema/handlers.js";
 import { SCHEMA_TOOLS } from "./schema/tools.js";
+import {
+  DataRoot,
+  handleJsonSchema,
+  handleJsonQuery,
+  handleJsonStat,
+  handleJsonDiff,
+  handleListDataFiles,
+} from "./data/handlers.js";
+import { DATA_TOOLS } from "./data/tools.js";
 import { createSourceFromConfig, parseGitHubUrl } from "./source.js";
 import type { SourceConfig, DocsSource } from "./source.js";
 
@@ -170,6 +179,7 @@ interface Library {
   mdSource?: DocsSource;
   apiIndex?: ApiDocIndex;
   schemaIndex?: SchemaIndex;
+  dataRoot?: DataRoot;
 }
 
 const libraries = new Map<string, Library>();
@@ -188,6 +198,8 @@ for (const lib of libraryConfigs) {
       entry.apiIndex = new ApiDocIndex(docsSource, parsers);
     } else if (src.kind === "schema") {
       entry.schemaIndex = new SchemaIndex(docsSource);
+    } else if (src.kind === "data") {
+      entry.dataRoot = new DataRoot(docsSource, src.origin);
     }
   }
   libraries.set(lib.name, entry);
@@ -197,6 +209,7 @@ const libraryList = [...libraries.values()];
 const hasAnyDocs = libraryList.some((l) => l.mdSource);
 const hasAnyApi = libraryList.some((l) => l.apiIndex);
 const hasAnySchema = libraryList.some((l) => l.schemaIndex);
+const hasAnyData = libraryList.some((l) => l.dataRoot);
 
 const singleLibrary = libraryList.length === 1 ? libraryList[0]! : null;
 
@@ -266,9 +279,10 @@ if (libraryList.length > 1) TOOLS.push(LIST_LIBRARIES_TOOL);
 if (hasAnyDocs) TOOLS.push(...injectLibraryParam(MARKDOWN_TOOLS));
 if (hasAnyApi) TOOLS.push(...injectLibraryParam(API_TOOLS));
 if (hasAnySchema) TOOLS.push(...injectLibraryParam(SCHEMA_TOOLS));
+if (hasAnyData) TOOLS.push(...injectLibraryParam(DATA_TOOLS));
 
 console.error(
-  `[init] ${libraries.size} libraries, ${TOOLS.length} tools (docs:${hasAnyDocs} api:${hasAnyApi} schema:${hasAnySchema})`,
+  `[init] ${libraries.size} libraries, ${TOOLS.length} tools (docs:${hasAnyDocs} api:${hasAnyApi} schema:${hasAnySchema} data:${hasAnyData})`,
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,6 +329,7 @@ const handleCallTool = async (request: { params: { name: string; arguments?: Rec
         docs: !!l.mdSource,
         api: !!l.apiIndex,
         schema: !!l.schemaIndex,
+        data: !!l.dataRoot,
       },
     }));
     return {
@@ -396,6 +411,34 @@ const handleCallTool = async (request: { params: { name: string; arguments?: Rec
         );
       case "search_all_schemas":
         return handleSearchAllSchemas(args as { keyword: string }, library.schemaIndex);
+    }
+  }
+
+  // Data tools
+  if (library.dataRoot) {
+    switch (toolName) {
+      case "list_data_files":
+        return handleListDataFiles(library.dataRoot);
+      case "json_schema":
+        return handleJsonSchema(
+          args as { file?: string; depth?: number; sample?: number },
+          library.dataRoot,
+        );
+      case "json_query":
+        return handleJsonQuery(
+          args as { file?: string; expr?: string; limit?: number; max_string?: number },
+          library.dataRoot,
+        );
+      case "json_stat":
+        return handleJsonStat(
+          args as { file?: string; expr?: string; value?: string; group_by?: string },
+          library.dataRoot,
+        );
+      case "json_diff":
+        return handleJsonDiff(
+          args as { file_a?: string; file_b?: string; expr?: string; key?: string; limit?: number },
+          library.dataRoot,
+        );
     }
   }
 

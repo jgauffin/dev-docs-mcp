@@ -30,7 +30,21 @@ A single server instance can host multiple libraries/frameworks side-by-side. Th
 }
 ```
 
-See [`sample-config.json`](../sample-config.json) for a complete example with all three source kinds.
+See [`sample-config.json`](../sample-config.json) for a complete example with all four source kinds.
+
+A `data` source points at a directory of JSON/JSONL data files rather than documentation:
+
+```json
+{
+  "name": "exports",
+  "description": "Nightly warehouse exports",
+  "sources": [
+    { "type": "disk", "origin": "./exports", "kind": "data" }
+  ]
+}
+```
+
+Data files are read as streams, which a raw GitHub source cannot do. Use `type: "disk"`, or set `cacheDir` so a `github` source is cloned to disk first.
 
 ## Top-level fields
 
@@ -59,7 +73,7 @@ Each library's `sources` array contains one or more source entries:
 |---|---|
 | `type` | `"disk"` or `"github"` |
 | `origin` | Local path or GitHub URL |
-| `kind` | `"docs"`, `"api"`, or `"schema"` — see [tools.md](tools.md) for what each enables |
+| `kind` | `"docs"`, `"api"`, `"schema"`, or `"data"` — see [tools.md](tools.md) for what each enables |
 | `folder` | *(optional)* Subfolder within the origin |
 
 The `folder` field is useful when a single GitHub repo hosts multiple kinds — the repo is only cloned once:

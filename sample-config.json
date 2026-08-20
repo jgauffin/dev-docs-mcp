@@ -40,6 +40,13 @@
         { "type": "disk", "origin": "./mylib/docs", "kind": "docs" },
         { "type": "disk", "origin": "./mylib/bin/Release", "kind": "api" }
       ]
+    },
+    {
+      "name": "exports",
+      "description": "Nightly JSON exports — queried, never read whole",
+      "sources": [
+        { "type": "disk", "origin": "./exports", "kind": "data" }
+      ]
     }
   ]
 }

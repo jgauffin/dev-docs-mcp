@@ -1,0 +1,45 @@
+{
+  "generated": "2026-08-02T09:00:00Z",
+  "source": "warehouse export \"nightly\"",
+  "orders": [
+    {
+      "id": "o-1",
+      "status": "open",
+      "total": 120.5,
+      "customer": { "name": "Ada", "city": "Uppsala" },
+      "lines": [
+        { "sku": "A", "qty": 2 },
+        { "sku": "B", "qty": 1 }
+      ]
+    },
+    {
+      "id": "o-2",
+      "status": "closed",
+      "total": 45,
+      "customer": { "name": "Grace", "city": "Malmo" },
+      "lines": [{ "sku": "A", "qty": 1 }]
+    },
+    {
+      "id": "o-3",
+      "status": "open",
+      "total": 900,
+      "customer": { "name": "Linus", "city": "Stockholm" },
+      "lines": [],
+      "note": null
+    },
+    {
+      "id": "o-4",
+      "status": "open",
+      "total": null,
+      "customer": { "name": "Tove", "city": "Göteborg" },
+      "lines": [{ "sku": "C", "qty": 5 }]
+    },
+    {
+      "id": "o-6",
+      "status": "open",
+      "total": 15,
+      "customer": { "name": "Karin", "city": "Lund" },
+      "lines": []
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Docs MCP Server
 
-An MCP (Model Context Protocol) server that exposes **Markdown documentation**, **API reference** (C# XML-doc / TypeDoc), and **JSON Schema / OpenAPI** specs to AI agents. From local folders or GitHub repositories.
+An MCP (Model Context Protocol) server that exposes **Markdown documentation**, **API reference** (C# XML-doc / TypeDoc), **JSON Schema / OpenAPI** specs, and **JSON/JSONL data files** to AI agents. From local folders or GitHub repositories.
 
 A single server instance can host **multiple libraries/frameworks** side-by-side, each with its own sources. The AI picks which library to query via a `library` parameter, discoverable through the `list_libraries` tool.
 
@@ -12,6 +12,7 @@ A single server instance can host **multiple libraries/frameworks** side-by-side
 | **Discovery** | Agent scans directories and reads files one-by-one | Index tools give instant overviews of every source |
 | **Search** | Agent greps files manually, burning context | Dedicated search tools with regex or glob support |
 | **Large files** | Entire file loaded into context | TOC + chapter extraction reads only needed sections |
+| **Data files** | A large JSON export cannot be read at all | Structure, filtered rows and aggregates, streamed and capped |
 | **Multi-library** | Agent must know every path/repo | One server, many libraries, self-describing |
 | **Source** | Local files only | Local directories or GitHub URLs — no cloning required |
 
@@ -34,8 +35,9 @@ See [`sample-config.json`](sample-config.json) for a complete multi-library exam
 
 - [Getting started](docs/getting-started.md) — install, CLI, Claude Code / Claude Desktop integration
 - [Configuration](docs/configuration.md) — config file format, libraries, sources
-- [Tools](docs/tools.md) — the tool groups the agent sees (docs / api / schema)
+- [Tools](docs/tools.md) — the tool groups the agent sees (docs / api / schema / data)
 - [Hosting](docs/hosting.md) — HTTP mode and IIS (httpPlatformHandler) setup
+- [Changelog](CHANGELOG.md) — what changed per release
 
 ## License
 

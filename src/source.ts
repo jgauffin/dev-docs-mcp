@@ -1,4 +1,6 @@
 import fs from "fs/promises";
+import { createReadStream } from "fs";
+import type { Readable } from "stream";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -33,6 +35,17 @@ export interface DocsSource {
    * @param appendExtension Extension to append if missing (default ".md"), or false to skip.
    */
   resolvePath(inputPath: string, appendExtension?: string | false): string | null;
+
+  /**
+   * Open a file as a stream, without the size limit `readFile` enforces. Data
+   * tools answer questions about files far too large to return, so they read
+   * them a chunk at a time instead of refusing them. Only sources backed by a
+   * local directory can do this.
+   */
+  openStream?(relativePath: string): Promise<Readable>;
+
+  /** Size of a file in bytes. Available wherever `openStream` is. */
+  statFile?(relativePath: string): Promise<{ size: number }>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,7 +56,7 @@ export interface DocsSource {
  * Normalize and validate a relative path.
  * Returns the posix-normalized path or null if it escapes the root.
  */
-function safeRelativePath(inputPath: string, appendExtension: string | false = ".md"): string | null {
+export function safeRelativePath(inputPath: string, appendExtension: string | false = ".md"): string | null {
   const normalized = path.posix.normalize(inputPath.replace(/\\/g, "/"));
 
   if (
@@ -60,6 +73,22 @@ function safeRelativePath(inputPath: string, appendExtension: string | false = "
   if (appendExtension && !result.endsWith(appendExtension)) result += appendExtension;
 
   return result;
+}
+
+/**
+ * Resolve a relative path to a real path inside the root, following symlinks.
+ * Throws when the result would leave the root.
+ */
+async function realPathWithinRoot(
+  root: string,
+  realRoot: string,
+  relativePath: string
+): Promise<string> {
+  const realPath = await fs.realpath(path.join(root, relativePath));
+  if (!realPath.startsWith(realRoot + path.sep) && realPath !== realRoot) {
+    throw new Error("Path escapes document root");
+  }
+  return realPath;
 }
 
 /**
@@ -121,6 +150,17 @@ export class FileSystemSource implements DocsSource {
     }
 
     return fs.readFile(realPath, "utf-8");
+  }
+
+  async openStream(relativePath: string): Promise<Readable> {
+    const realPath = await realPathWithinRoot(this.root, await this.getRealRoot(), relativePath);
+    return createReadStream(realPath);
+  }
+
+  async statFile(relativePath: string): Promise<{ size: number }> {
+    const realPath = await realPathWithinRoot(this.root, await this.getRealRoot(), relativePath);
+    const stat = await fs.stat(realPath);
+    return { size: stat.size };
   }
 
   async getChangeStamp(pattern: string | string[]): Promise<string> {
@@ -481,6 +521,19 @@ export class GitCloneSource implements DocsSource {
     return fs.readFile(realPath, "utf-8");
   }
 
+  async openStream(relativePath: string): Promise<Readable> {
+    await this.ensureClone();
+    const realPath = await realPathWithinRoot(this.docsRoot, await this.getRealRoot(), relativePath);
+    return createReadStream(realPath);
+  }
+
+  async statFile(relativePath: string): Promise<{ size: number }> {
+    await this.ensureClone();
+    const realPath = await realPathWithinRoot(this.docsRoot, await this.getRealRoot(), relativePath);
+    const stat = await fs.stat(realPath);
+    return { size: stat.size };
+  }
+
   async getChangeStamp(pattern: string | string[]): Promise<string> {
     await this.ensureClone();
     return stampFromDisk(this.docsRoot, pattern);
@@ -501,7 +554,7 @@ export interface SourceConfig {
   /** Local path or GitHub URL. */
   origin: string;
   /** What the source provides. */
-  kind: "docs" | "api" | "schema";
+  kind: "docs" | "api" | "schema" | "data";
   /** Subfolder within the origin (especially useful for GitHub repos). */
   folder?: string;
 }
