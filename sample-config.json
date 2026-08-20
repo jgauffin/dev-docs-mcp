@@ -3,6 +3,7 @@
   "description": "Documentation server hosting multiple libraries",
   "cacheDir": "./cache",
   "updateInterval": 30,
+  "refreshInterval": 10,
   "libraries": [
     {
       "name": "relaxjs",
@@ -39,6 +40,18 @@
       "sources": [
         { "type": "disk", "origin": "./mylib/docs", "kind": "docs" },
         { "type": "disk", "origin": "./mylib/bin/Release", "kind": "api" }
+      ]
+    },
+    {
+      "name": "orders-api",
+      "description": "Order handling service — OpenAPI spec fetched from the running service",
+      "sources": [
+        {
+          "type": "url",
+          "origin": "https://localhost:5001/openapi/v1.json",
+          "kind": "schema",
+          "name": "orders"
+        }
       ]
     },
     {

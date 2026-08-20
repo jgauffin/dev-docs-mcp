@@ -41,8 +41,9 @@ docs-mcpserver <docs-folder-or-github-url> [options]
 | `--config <file>` | Load settings from a JSON config file. CLI flags override config file values. |
 | `--name <name>` | Server name |
 | `--description <text>` | Server description |
-| `--cache-dir <path>` | Directory for cached git clones |
+| `--cache-dir <path>` | Directory for cached git clones and fetched specs |
 | `--update-interval <minutes>` | Refresh interval for cached clones |
+| `--refresh-interval <seconds>` | Refresh interval for specs fetched from a URL (default `10`) |
 | `--port <port>` | Run as HTTP server on this port (see [hosting.md](hosting.md)) |
 | `--api <folder>` | (legacy) API docs folder for implicit single library |
 

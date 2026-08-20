@@ -52,8 +52,13 @@ Data files are read as streams, which a raw GitHub source cannot do. Use `type: 
 |---|---|
 | `name` | Server name shown to the MCP client |
 | `description` | Server description shown to the MCP client. The list of libraries is auto-appended so the agent knows what's available. |
-| `cacheDir` | Directory for cached git clones (used when `type: "github"` is configured) |
-| `updateInterval` | Minutes between `git pull` refreshes for cloned sources |
+| `cacheDir` | Directory for cached content — git clones (`type: "github"`) and fetched specs (`type: "url"`). **Required** when any `url` source is configured. |
+| `updateInterval` | **Minutes** between `git pull` refreshes for cloned GitHub sources (default `30`) |
+| `refreshInterval` | **Seconds** before a `url` source re-fetches its spec (default `10`) |
+
+The two refresh settings are deliberately separate. GitHub repositories are external resources and
+are polled slowly (30 minutes); specs published by your own locally running services are cheap to
+ask and are polled in seconds, so a spec you are editing right now shows up almost immediately.
 | `port` | Run as HTTP server on this port — see [hosting.md](hosting.md) |
 | `libraries` | Array of library configs |
 
@@ -71,10 +76,13 @@ Each library's `sources` array contains one or more source entries:
 
 | Field | Description |
 |---|---|
-| `type` | `"disk"` or `"github"` |
-| `origin` | Local path or GitHub URL |
+| `type` | `"disk"`, `"github"`, or `"url"` |
+| `origin` | Local path, GitHub URL, or spec URL |
 | `kind` | `"docs"`, `"api"`, `"schema"`, or `"data"` — see [tools.md](tools.md) for what each enables |
-| `folder` | *(optional)* Subfolder within the origin |
+| `folder` | *(optional)* Subfolder within the origin — `disk` and `github` only |
+| `name` | *(optional, `url` only)* Schema name the agent uses. Defaults to the last URL path segment. |
+| `refreshInterval` | *(optional, `url` only)* Seconds before this spec is re-fetched, overriding the top-level value |
+| `allowSelfSignedCertificate` | *(optional, `url` only)* Accept an untrusted TLS certificate. Defaults to `true` for `localhost`/`127.0.0.1`, `false` everywhere else. |
 
 The `folder` field is useful when a single GitHub repo hosts multiple kinds — the repo is only cloned once:
 
@@ -92,6 +100,84 @@ The `folder` field is useful when a single GitHub repo hosts multiple kinds — 
   ]
 }
 ```
+
+## Specs from a running service — `type: "url"`
+
+A service that exposes its OpenAPI spec over HTTP can be configured by URL instead of copying the
+spec file into a folder by hand:
+
+```json
+{
+  "cacheDir": "./cache",
+  "refreshInterval": 10,
+  "libraries": [
+    {
+      "name": "orders-api",
+      "description": "Order handling service",
+      "sources": [
+        {
+          "type": "url",
+          "origin": "https://localhost:5001/openapi/v1.json",
+          "kind": "schema",
+          "name": "orders"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The agent then queries it exactly like any other schema — `list_schemas` reports it under `orders`
+(the `name` field, or the last URL path segment when `name` is omitted).
+
+### Caching and refresh
+
+The fetched spec is written to `<cacheDir>/url/<host>/<name>.json`, which makes these sources
+suitable for services that are only running while you work on them:
+
+- **On startup** the server fetches every configured spec in the background.
+- **On each tool call** a refresh starts in the background if the cached spec is older than
+  `refreshInterval` (default 10 seconds). The call itself is answered from the cache and never
+  waits for the service — so editing a spec in a running service shows up within seconds, without
+  the server issuing a request per tool call.
+- **A cold start with nothing cached** is the one case that waits for the fetch (5 second timeout),
+  so the first call returns a spec rather than an empty library.
+
+### When the service is unavailable
+
+Fetch failures are never fatal. The reason is logged to stderr and the last cached spec keeps being
+served; if nothing was ever cached the library simply reports no schemas. This applies to a service
+that is down, an error status, a timeout, and a response that is not a recognised schema — a
+known-good cached spec is never replaced by a bad response.
+
+### HTTPS and development certificates
+
+A service running locally over HTTPS — an ASP.NET project on `https://localhost:7276`, for
+instance — presents a development certificate that no trust store accepts. Node's `fetch` rejects
+it with `DEPTH_ZERO_SELF_SIGNED_CERT` and reports nothing more than "fetch failed".
+
+Sources on `localhost` and `127.0.0.1` therefore accept an untrusted certificate by default, so a
+local service works without extra configuration. Any other host is verified normally; to fetch a
+spec from a remote service with an untrusted certificate, opt in explicitly:
+
+```json
+{
+  "type": "url",
+  "origin": "https://staging.internal/openapi/v1.json",
+  "kind": "schema",
+  "allowSelfSignedCertificate": true
+}
+```
+
+Verification is waived per request — the process-wide TLS trust settings are never modified, so
+every other source keeps full certificate checking.
+
+### Limitations
+
+- The response must be **JSON**. YAML specs are not supported; the fetch is skipped and logged.
+- `cacheDir` must be configured — the server fails at startup with an explanatory error otherwise.
+- Only `kind: "schema"` is meaningful. A `url` source with another `kind` is ignored with a warning.
+- `folder` does not apply — a `url` source is a single document.
 
 ## Supported GitHub URL formats
 

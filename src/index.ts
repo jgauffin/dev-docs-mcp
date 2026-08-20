@@ -68,6 +68,8 @@ interface ServerConfig {
   description?: string;
   cacheDir?: string;
   updateInterval?: number;
+  /** Seconds before a url source re-fetches its spec. Defaults to 10. */
+  refreshInterval?: number;
   port?: number;
 
   /** New multi-library config. */
@@ -98,6 +100,8 @@ function loadConfig(argv: string[]): ServerConfig {
       config.cacheDir = args[++i];
     } else if (arg === "--update-interval" && i + 1 < args.length) {
       config.updateInterval = parseInt(args[++i]!, 10);
+    } else if (arg === "--refresh-interval" && i + 1 < args.length) {
+      config.refreshInterval = parseInt(args[++i]!, 10);
     } else if (arg === "--port" && i + 1 < args.length) {
       config.port = parseInt(args[++i]!, 10);
     } else if (arg === "--api" && i + 1 < args.length) {
@@ -111,7 +115,7 @@ function loadConfig(argv: string[]): ServerConfig {
 }
 
 const config = loadConfig(process.argv);
-const { name, description, cacheDir, updateInterval } = config;
+const { name, description, cacheDir, updateInterval, refreshInterval } = config;
 const port = config.port ?? (process.env.HTTP_PLATFORM_PORT ? parseInt(process.env.HTTP_PLATFORM_PORT, 10) : undefined);
 
 /**
@@ -155,7 +159,7 @@ function validateLibraryName(libName: string): void {
 const libraryConfigs = resolveLibraries(config);
 if (libraryConfigs.length === 0) {
   console.error(
-    "Usage: docs-mcpserver [<docs-folder>] [--config <file>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>] [--port <port>]",
+    "Usage: docs-mcpserver [<docs-folder>] [--config <file>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>] [--refresh-interval <seconds>] [--port <port>]",
   );
   process.exit(1);
 }
@@ -168,6 +172,7 @@ for (const lib of libraryConfigs) {
 }
 
 const updateIntervalMs = updateInterval ? updateInterval * 60_000 : undefined;
+const refreshIntervalMs = refreshInterval ? refreshInterval * 1_000 : undefined;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Library setup — load each library's sources into its own handlers
@@ -190,7 +195,14 @@ for (const lib of libraryConfigs) {
     console.error(
       `[init] Library "${lib.name}": setting up ${src.kind} source: ${src.type} ${src.origin}${src.folder ? ` (folder: ${src.folder})` : ""}`,
     );
-    const docsSource = createSourceFromConfig(src, cacheDir, updateIntervalMs);
+    if (src.type === "url" && src.kind !== "schema") {
+      console.error(
+        `[init] Library "${lib.name}": a url source serves a single fetched spec, which only the ` +
+          `schema tools can read. Ignoring kind "${src.kind}" for ${src.origin}.`,
+      );
+      continue;
+    }
+    const docsSource = createSourceFromConfig(src, cacheDir, updateIntervalMs, refreshIntervalMs);
     if (src.kind === "docs") {
       entry.mdSource = docsSource;
     } else if (src.kind === "api") {

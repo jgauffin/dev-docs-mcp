@@ -1,6 +1,6 @@
 # Docs MCP Server
 
-An MCP (Model Context Protocol) server that exposes **Markdown documentation**, **API reference** (C# XML-doc / TypeDoc), **JSON Schema / OpenAPI** specs, and **JSON/JSONL data files** to AI agents. From local folders or GitHub repositories.
+An MCP (Model Context Protocol) server that exposes **Markdown documentation**, **API reference** (C# XML-doc / TypeDoc), **JSON Schema / OpenAPI** specs, and **JSON/JSONL data files** to AI agents. From local folders, GitHub repositories, or straight from a service's OpenAPI URL.
 
 A single server instance can host **multiple libraries/frameworks** side-by-side, each with its own sources. The AI picks which library to query via a `library` parameter, discoverable through the `list_libraries` tool.
 
@@ -14,7 +14,8 @@ A single server instance can host **multiple libraries/frameworks** side-by-side
 | **Large files** | Entire file loaded into context | TOC + chapter extraction reads only needed sections |
 | **Data files** | A large JSON export cannot be read at all | Structure, filtered rows and aggregates, streamed and capped |
 | **Multi-library** | Agent must know every path/repo | One server, many libraries, self-describing |
-| **Source** | Local files only | Local directories or GitHub URLs — no cloning required |
+| **Source** | Local files only | Local directories, GitHub URLs, or a live OpenAPI endpoint — no cloning or copying required |
+| **Live specs** | Spec files copied by hand whenever they change | Fetched from the service and cached — still served when the service is down |
 
 ## Quick start
 

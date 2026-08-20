@@ -39,6 +39,8 @@ The `api` pipeline does not read source code — it consumes a generated documen
 
 Indexes **JSON Schema** (draft 6+), **OpenAPI 3.x**, and **Swagger 2.0** files. For OpenAPI specs, path operations are exposed as definitions named like `GET /pets`.
 
+Specs can come from a folder (`type: "disk"` / `"github"`) or straight from a running service that publishes them over HTTP (`type: "url"`) — see [configuration.md](configuration.md#specs-from-a-running-service--type-url). Fetched specs are cached, so a service that is not currently running still serves its last known spec.
+
 > TypeDoc JSON files should use `kind: "api"`, not `kind: "schema"` — the API pipeline has a richer model for types and members.
 
 | Tool | Description |
