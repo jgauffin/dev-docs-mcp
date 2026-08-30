@@ -32,7 +32,7 @@ A single server instance can host multiple libraries/frameworks side-by-side. Th
 
 See [`sample-config.json`](../sample-config.json) for a complete example with all four source kinds.
 
-A `data` source points at a directory of JSON/JSONL data files rather than documentation:
+The JSON data tools need no configuration: they are rooted at the directory the server was started in unless a library declares a `data` source. Configure one only to point them at a fixed directory instead, which also puts them behind the `library` parameter:
 
 ```json
 {

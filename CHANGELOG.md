@@ -2,6 +2,13 @@
 
 Notable changes per release. Details are in [docs/](docs/) and in `git log`.
 
+## Unreleased
+
+### Changed
+
+- The JSON data tools now work with no configuration, rooted at the directory the server was started in. A library with `kind: "data"` still overrides that root. `list_data_files` skips `node_modules`, `dist` and similar, and caps its listing.
+- Starting with no libraries configured no longer exits with a usage error. The server runs and serves the JSON data tools.
+
 ## 1.0.0 - 2026-08-20
 
 First tagged release. Markdown docs, API reference, JSON Schema / OpenAPI and JSON data, from local folders or GitHub, hosted as one or many libraries.

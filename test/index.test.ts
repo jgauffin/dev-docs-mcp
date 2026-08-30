@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import path from "path";
 import { execFile } from "child_process";
-import { promisify } from "util";
 import {
   extractToc,
   extractChapters,
@@ -15,7 +14,6 @@ import {
 } from "../src/markdown/handlers.js";
 import { FileSystemSource, GitHubSource, parseGitHubUrl } from "../src/source.js";
 
-const execFileAsync = promisify(execFile);
 const FIXTURES_PATH = path.resolve(import.meta.dirname, "fixtures");
 const fixturesSource = new FileSystemSource(FIXTURES_PATH);
 
@@ -24,15 +22,23 @@ const fixturesSource = new FileSystemSource(FIXTURES_PATH);
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("CLI argument", () => {
-  it("exits with error when no docs folder argument is provided", async () => {
-    try {
-      await execFileAsync("node", ["dist/index.js"]);
-      expect.fail("should have exited with non-zero code");
-    } catch (err: unknown) {
-      const error = err as { code: number; stderr: string };
-      expect(error.code).toBe(1);
-      expect(error.stderr).toContain("Usage:");
-    }
+  it("serves the data tools on the working directory when no docs folder is provided", async () => {
+    const child = execFile("node", ["dist/index.js"]);
+
+    const stderr = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      child.stderr?.on("data", (chunk) => {
+        data += chunk;
+        if (data.includes("running on stdio")) resolve(data);
+      });
+      child.on("error", reject);
+      setTimeout(() => resolve(data), 3000);
+    });
+
+    child.kill();
+    expect(stderr).toContain("No libraries configured");
+    expect(stderr).toContain(process.cwd());
+    expect(stderr).toContain("MCP Server running on stdio");
   });
 
   it("uses the provided docs folder argument", async () => {

@@ -24,7 +24,24 @@ import {
 } from "./output.js";
 import { GroupedAccumulator, Accumulator, MAX_GROUPS, groupKeyOf } from "./stats.js";
 
-export const DATA_FILE_PATTERN = "**/*.{json,jsonl,ndjson}";
+/**
+ * Discovery skips the directories that make a source tree noisy rather than
+ * informative. The exclusions apply to listing only: a file inside one of them
+ * can still be read by naming it directly.
+ */
+export const DATA_FILE_PATTERN = [
+  "**/*.{json,jsonl,ndjson}",
+  "!**/node_modules/**",
+  "!**/.git/**",
+  "!**/dist/**",
+  "!**/build/**",
+  "!**/coverage/**",
+  "!**/.venv/**",
+  "!**/obj/**",
+];
+
+/** Files named by one listing before the rest are reported as a count. */
+export const MAX_LISTED_FILES = 200;
 
 /** Room left for the fields that wrap the rows. */
 const ENVELOPE_BYTES = 2048;
@@ -46,16 +63,30 @@ export class DataRoot {
     }
   }
 
-  async list(): Promise<Array<{ file: string; format: string; bytes: number | null }>> {
-    const files = await this.source.listFiles(DATA_FILE_PATTERN);
+  async list(): Promise<{
+    root: string;
+    files: Array<{ file: string; format: string; bytes: number | null }>;
+    found: number;
+    truncated: { reason: "limit"; files_omitted: number } | null;
+  }> {
+    const found = (await this.source.listFiles(DATA_FILE_PATTERN)).sort();
     const listed = await Promise.all(
-      files.sort().map(async (file) => ({
+      found.slice(0, MAX_LISTED_FILES).map(async (file) => ({
         file,
         format: detectFormat(file),
         bytes: await this.sizeOf(file),
       })),
     );
-    return listed;
+
+    return {
+      root: this.origin,
+      files: listed,
+      found: found.length,
+      truncated:
+        found.length > listed.length
+          ? { reason: "limit", files_omitted: found.length - listed.length }
+          : null,
+    };
   }
 
   /** Validate a caller-supplied path and bind it to a reader. */

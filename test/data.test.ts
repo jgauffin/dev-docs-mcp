@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import path from "path";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { spawn } from "child_process";
 import { StringDecoder } from "string_decoder";
 import { FileSystemSource } from "../src/source.js";
 import { JsonTokenizer, JsonSyntaxError, LongString, formatPath } from "../src/data/scanner.js";
@@ -12,6 +13,7 @@ import { ShapeBuilder } from "../src/data/shape.js";
 import { MAX_RESPONSE_BYTES, clipStrings, fitRows } from "../src/data/output.js";
 import {
   DataRoot,
+  MAX_LISTED_FILES,
   handleJsonDiff,
   handleJsonQuery,
   handleJsonSchema,
@@ -35,6 +37,54 @@ function payload(result: ToolResult): any {
 function errorText(result: ToolResult): string {
   expect(result.isError).toBe(true);
   return result.content[0]!.text;
+}
+
+/**
+ * Start the built server on stdio and speak JSON-RPC to it, which is the only
+ * way to exercise the wiring that decides where the data tools are rooted.
+ */
+async function runServer(args: string[]): Promise<{
+  send: (method: string, params: unknown) => Promise<any>;
+  stop: () => void;
+}> {
+  const child = spawn("node", ["dist/index.js", ...args], { stdio: ["pipe", "pipe", "ignore"] });
+  const pending = new Map<number, (message: any) => void>();
+  let buffer = "";
+  let nextId = 1;
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    buffer += chunk.toString("utf8");
+    for (;;) {
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) break;
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line) continue;
+      const message = JSON.parse(line);
+      const resolve = pending.get(message.id);
+      if (resolve) {
+        pending.delete(message.id);
+        resolve(message);
+      }
+    }
+  });
+
+  const send = (method: string, params: unknown): Promise<any> => {
+    const id = nextId++;
+    return new Promise((resolve) => {
+      pending.set(id, resolve);
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    });
+  };
+
+  await send("initialize", {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1.0.0" },
+  });
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+
+  return { send, stop: () => child.kill() };
 }
 
 /** Run text through the tokenizer in the given chunks and rebuild the value. */
@@ -651,11 +701,84 @@ describe("oversized files", () => {
 
 describe("list_data_files", () => {
   it("lists the data files with their format and size", async () => {
-    const files = payload(await handleListDataFiles(root));
-    const orders = files.find((f: any) => f.file === "orders.json");
+    const listing = payload(await handleListDataFiles(root));
+    const orders = listing.files.find((f: any) => f.file === "orders.json");
 
     expect(orders.format).toBe("json");
     expect(orders.bytes).toBeGreaterThan(0);
-    expect(files.find((f: any) => f.file === "events.jsonl").format).toBe("jsonl");
+    expect(listing.files.find((f: any) => f.file === "events.jsonl").format).toBe("jsonl");
+    expect(listing.found).toBe(listing.files.length);
+    expect(listing.truncated).toBeNull();
+  });
+
+  it("skips the directories that would bury the real files", async () => {
+    const repository = path.resolve(import.meta.dirname, "..");
+    const listing = payload(await handleListDataFiles(new DataRoot(new FileSystemSource(repository), repository)));
+    const named = listing.files.map((f: any) => f.file);
+
+    expect(named).toContain("package.json");
+    expect(named.some((f: string) => f.includes("node_modules"))).toBe(false);
+    expect(named.some((f: string) => f.startsWith("dist/"))).toBe(false);
+  });
+
+  it("caps a listing and says how many files it left out", async () => {
+    const listing = payload(await handleListDataFiles(root));
+    expect(listing.files.length).toBeLessThanOrEqual(MAX_LISTED_FILES);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The working directory as the default root
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("working directory root", () => {
+  it("answers questions about a file in the directory the server runs in", async () => {
+    const server = await runServer([]);
+    try {
+      const tools = await server.send("tools/list", {});
+      const names = tools.result.tools.map((t: any) => t.name);
+      expect(names).toEqual(
+        expect.arrayContaining(["list_data_files", "json_schema", "json_query", "json_stat", "json_diff"]),
+      );
+
+      const result = await server.send("tools/call", {
+        name: "json_query",
+        arguments: { file: "package.json", expr: "$.name" },
+      });
+      expect(JSON.parse(result.result.content[0].text).rows[0].value).toBe("docs-mcpserver");
+    } finally {
+      server.stop();
+    }
+  });
+
+  it("uses a configured data source instead of the working directory when one exists", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "docs-mcp-config-"));
+    const configFile = path.join(directory, "config.json");
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        name: "test",
+        libraries: [{ name: "exports", sources: [{ type: "disk", origin: FIXTURES, kind: "data" }] }],
+      }),
+      "utf-8",
+    );
+
+    const server = await runServer(["--config", configFile]);
+    try {
+      const inRoot = await server.send("tools/call", {
+        name: "json_query",
+        arguments: { file: "orders.json", expr: "$.orders[0].id" },
+      });
+      expect(JSON.parse(inRoot.result.content[0].text).rows[0].value).toBe("o-1");
+
+      const outsideRoot = await server.send("tools/call", {
+        name: "json_query",
+        arguments: { file: "package.json", expr: "$.name" },
+      });
+      expect(outsideRoot.result.content[0].text).toContain("not found");
+    } finally {
+      server.stop();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

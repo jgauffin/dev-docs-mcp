@@ -27,6 +27,7 @@ import {
   handleGetApiMember,
   handleSearchApi,
   textResult,
+  type ToolResult,
 } from "./api/handlers.js";
 import { API_TOOLS } from "./api/tools.js";
 import { XmlDocParser } from "./api/parsers/xmldoc-parser.js";
@@ -50,7 +51,7 @@ import {
   handleListDataFiles,
 } from "./data/handlers.js";
 import { DATA_TOOLS } from "./data/tools.js";
-import { createSourceFromConfig, parseGitHubUrl } from "./source.js";
+import { FileSystemSource, createSourceFromConfig, parseGitHubUrl } from "./source.js";
 import type { SourceConfig, DocsSource } from "./source.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,11 +158,16 @@ function validateLibraryName(libName: string): void {
 }
 
 const libraryConfigs = resolveLibraries(config);
+
+// Without libraries the server is still useful: the JSON data tools work on the
+// directory it was started in, which needs no configuration at all.
 if (libraryConfigs.length === 0) {
   console.error(
-    "Usage: docs-mcpserver [<docs-folder>] [--config <file>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>] [--refresh-interval <seconds>] [--port <port>]",
+    "[init] No libraries configured. Serving the JSON data tools only, rooted at the working directory.",
   );
-  process.exit(1);
+  console.error(
+    "[init] To serve documentation as well: docs-mcpserver [<docs-folder>] [--config <file>] [--api <api-folder>] [--name <name>] [--description <text>] [--cache-dir <path>] [--update-interval <minutes>] [--refresh-interval <seconds>] [--port <port>]",
+  );
 }
 
 const names = new Set<string>();
@@ -223,6 +229,19 @@ const hasAnyApi = libraryList.some((l) => l.apiIndex);
 const hasAnySchema = libraryList.some((l) => l.schemaIndex);
 const hasAnyData = libraryList.some((l) => l.dataRoot);
 
+/**
+ * With no data source configured, the data tools still work and are rooted at
+ * the directory the server was started in. Asking what shape a JSON file in the
+ * project you are working on has should not require a config entry first.
+ */
+const implicitDataRoot = hasAnyData
+  ? null
+  : new DataRoot(new FileSystemSource(process.cwd()), process.cwd());
+
+if (implicitDataRoot) {
+  console.error(`[init] Data tools rooted at the working directory: ${process.cwd()}`);
+}
+
 const singleLibrary = libraryList.length === 1 ? libraryList[0]! : null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +251,11 @@ const singleLibrary = libraryList.length === 1 ? libraryList[0]! : null;
 const SERVER_NAME = name ?? "docs-mcpserver";
 
 function buildServerDescription(): string {
+  if (libraryList.length === 0) {
+    const dataLine = `Queries JSON and JSONL files under ${process.cwd()}.`;
+    return description ? `${description} ${dataLine}` : dataLine;
+  }
+
   const summaries = libraryList.map((l) =>
     l.description ? `${l.name} (${l.description})` : l.name,
   );
@@ -245,6 +269,13 @@ function buildServerDescription(): string {
 
 const SERVER_DESCRIPTION = buildServerDescription();
 console.error(`[init] ${SERVER_DESCRIPTION}`);
+
+/** Tells the agent where the data tools read from, since it cannot see the working directory. */
+const SERVER_INSTRUCTIONS = implicitDataRoot
+  ? `The JSON data tools (list_data_files, json_schema, json_query, json_stat, json_diff) read ` +
+    `files under the directory this server was started in: ${process.cwd()}. Their file paths are ` +
+    `relative to it and cannot leave it. They take no library parameter.`
+  : undefined;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool definitions — inject `library` parameter where needed
@@ -291,7 +322,10 @@ if (libraryList.length > 1) TOOLS.push(LIST_LIBRARIES_TOOL);
 if (hasAnyDocs) TOOLS.push(...injectLibraryParam(MARKDOWN_TOOLS));
 if (hasAnyApi) TOOLS.push(...injectLibraryParam(API_TOOLS));
 if (hasAnySchema) TOOLS.push(...injectLibraryParam(SCHEMA_TOOLS));
+// The implicit working-directory root belongs to no library, so it takes no
+// library parameter even when several libraries are configured.
 if (hasAnyData) TOOLS.push(...injectLibraryParam(DATA_TOOLS));
+else TOOLS.push(...DATA_TOOLS);
 
 console.error(
   `[init] ${libraries.size} libraries, ${TOOLS.length} tools (docs:${hasAnyDocs} api:${hasAnyApi} schema:${hasAnySchema} data:${hasAnyData})`,
@@ -313,6 +347,9 @@ function resolveLibrary(
     return { library: lib };
   }
   if (singleLibrary) return { library: singleLibrary };
+  if (libraryList.length === 0) {
+    return { error: "no libraries are configured on this server; only the JSON data tools are available" };
+  }
   return { error: `library parameter is required. Available: ${libraryNames.join(", ")}` };
 }
 
@@ -322,12 +359,43 @@ function resolveLibrary(
 
 const mcpServer = new McpServer(
   { name: SERVER_NAME, version: "1.0.0", description: SERVER_DESCRIPTION },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
 );
 
 mcpServer.server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: TOOLS,
 }));
+
+/** Returns null when the tool is not one of the data tools. */
+function dispatchDataTool(
+  toolName: string,
+  args: Record<string, unknown> | undefined,
+  dataRoot: DataRoot,
+): Promise<ToolResult> | null {
+  switch (toolName) {
+    case "list_data_files":
+      return handleListDataFiles(dataRoot);
+    case "json_schema":
+      return handleJsonSchema(args as { file?: string; depth?: number; sample?: number }, dataRoot);
+    case "json_query":
+      return handleJsonQuery(
+        args as { file?: string; expr?: string; limit?: number; max_string?: number },
+        dataRoot,
+      );
+    case "json_stat":
+      return handleJsonStat(
+        args as { file?: string; expr?: string; value?: string; group_by?: string },
+        dataRoot,
+      );
+    case "json_diff":
+      return handleJsonDiff(
+        args as { file_a?: string; file_b?: string; expr?: string; key?: string; limit?: number },
+        dataRoot,
+      );
+    default:
+      return null;
+  }
+}
 
 const handleCallTool = async (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
   const { name: toolName, arguments: args } = request.params;
@@ -348,6 +416,13 @@ const handleCallTool = async (request: { params: { name: string; arguments?: Rec
       content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
       isError: false,
     };
+  }
+
+  // Rooted at the working directory rather than at a library, so this runs
+  // before a library has to be resolved.
+  if (implicitDataRoot) {
+    const fromWorkingDirectory = dispatchDataTool(toolName, args, implicitDataRoot);
+    if (fromWorkingDirectory) return fromWorkingDirectory;
   }
 
   const resolved = resolveLibrary(args);
@@ -427,32 +502,8 @@ const handleCallTool = async (request: { params: { name: string; arguments?: Rec
   }
 
   // Data tools
-  if (library.dataRoot) {
-    switch (toolName) {
-      case "list_data_files":
-        return handleListDataFiles(library.dataRoot);
-      case "json_schema":
-        return handleJsonSchema(
-          args as { file?: string; depth?: number; sample?: number },
-          library.dataRoot,
-        );
-      case "json_query":
-        return handleJsonQuery(
-          args as { file?: string; expr?: string; limit?: number; max_string?: number },
-          library.dataRoot,
-        );
-      case "json_stat":
-        return handleJsonStat(
-          args as { file?: string; expr?: string; value?: string; group_by?: string },
-          library.dataRoot,
-        );
-      case "json_diff":
-        return handleJsonDiff(
-          args as { file_a?: string; file_b?: string; expr?: string; key?: string; limit?: number },
-          library.dataRoot,
-        );
-    }
-  }
+  const fromLibraryData = library.dataRoot && dispatchDataTool(toolName, args, library.dataRoot);
+  if (fromLibraryData) return fromLibraryData;
 
   return textResult(
     `error: Tool "${toolName}" is not supported by library "${library.name}"`,

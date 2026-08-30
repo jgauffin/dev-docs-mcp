@@ -56,15 +56,19 @@ Search expressions support:
 - `*` and `?` as glob wildcards (`"GET*"`)
 - Plain substring match (case-insensitive)
 
-## JSON data — `kind: "data"`
+## JSON data — the working directory, or `kind: "data"`
 
 For **JSON and JSONL data files** — exports, dumps, API captures — as opposed to schemas that describe them. These tools answer questions about a file far larger than any answer could contain, so nothing here ever returns the file itself.
+
+**These tools need no configuration.** Unless a library declares a `data` source, they are rooted at the directory the server process was started in, which for an editor-launched MCP server is the project you are working in. Paths are relative to that directory and cannot leave it, and in this mode the tools take no `library` parameter. The server states the root in its instructions at startup.
+
+Declaring `kind: "data"` on a library points them somewhere else instead — a fixed export folder, say. Doing so replaces the working-directory root rather than adding to it, and the tools then take a `library` parameter like every other group.
 
 Every operation is capped, and a capped response says so: the true match count sits next to the number of rows returned, arrays report their real length, and a clipped string carries the length it was clipped from. A partial answer can never be mistaken for a complete one.
 
 | Tool | Description |
 |---|---|
-| `list_data_files` | Files available to the group, with format and size |
+| `list_data_files` | Files under the root, with format and size. Skips `node_modules`, `dist`, `.git` and similar, which affects listing only: a file inside one can still be read by name. |
 | `json_schema` | Structure only — key names, types, array lengths, nesting. The call to make first against an unfamiliar file. |
 | `json_query` | The values an expression selects, capped by row count and by response size |
 | `json_stat` | count / sum / min / max / mean / median over a selection, optionally grouped. The rows never come back. |
@@ -91,7 +95,7 @@ A JSONL file behaves exactly like a top-level array, so `$[*]` is its records an
 
 Files are read a chunk at a time, so memory is bounded by the largest single value being built rather than by the file size — a query against a file of hundreds of megabytes runs in the same memory as one against a small file. Two consequences worth knowing:
 
-- A `data` source must be readable from a local directory. Use `type: "disk"`, or configure `cacheDir` so a GitHub source is cloned locally first.
+- A configured `data` source must be readable from a local directory. Use `type: "disk"`, or configure `cacheDir` so a GitHub source is cloned locally first.
 - An expression selecting one enormous value (`$` on a large file) is refused with a message telling you to narrow it. Select the elements, not the array: `$.orders[*]`, not `$.orders`.
 
 ## Multi-library meta
