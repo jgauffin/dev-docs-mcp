@@ -187,6 +187,8 @@ const refreshIntervalMs = refreshInterval ? refreshInterval * 1_000 : undefined;
 interface Library {
   name: string;
   description?: string;
+  /** Every source in play, kept so list_libraries can say where content comes from. */
+  sources: Array<{ kind: SourceConfig["kind"]; origin: string; source: DocsSource }>;
   mdSource?: DocsSource;
   apiIndex?: ApiDocIndex;
   schemaIndex?: SchemaIndex;
@@ -196,7 +198,7 @@ interface Library {
 const libraries = new Map<string, Library>();
 
 for (const lib of libraryConfigs) {
-  const entry: Library = { name: lib.name, description: lib.description };
+  const entry: Library = { name: lib.name, description: lib.description, sources: [] };
   for (const src of lib.sources) {
     console.error(
       `[init] Library "${lib.name}": setting up ${src.kind} source: ${src.type} ${src.origin}${src.folder ? ` (folder: ${src.folder})` : ""}`,
@@ -209,6 +211,7 @@ for (const lib of libraryConfigs) {
       continue;
     }
     const docsSource = createSourceFromConfig(src, cacheDir, updateIntervalMs, refreshIntervalMs);
+    entry.sources.push({ kind: src.kind, origin: src.origin, source: docsSource });
     if (src.kind === "docs") {
       entry.mdSource = docsSource;
     } else if (src.kind === "api") {
@@ -249,6 +252,11 @@ const singleLibrary = libraryList.length === 1 ? libraryList[0]! : null;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SERVER_NAME = name ?? "docs-mcpserver";
+
+/** The published version, so clients see the same number npm does. */
+const SERVER_VERSION = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string }
+).version;
 
 function buildServerDescription(): string {
   if (libraryList.length === 0) {
@@ -313,7 +321,7 @@ function injectLibraryParam(tools: Tool[]): Tool[] {
 const LIST_LIBRARIES_TOOL: Tool = {
   name: "list_libraries",
   description:
-    "List all libraries available on this server with their descriptions and which tool groups they expose (docs / api / schema).",
+    "List all libraries available on this server with their descriptions, which tool groups they expose (docs / api / schema / data) and where their content comes from. A source serving a fetched copy reports when the copy was taken and, if the origin stopped answering, why.",
   inputSchema: { type: "object", properties: {}, required: [] },
 };
 
@@ -358,7 +366,7 @@ function resolveLibrary(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mcpServer = new McpServer(
-  { name: SERVER_NAME, version: "1.0.0", description: SERVER_DESCRIPTION },
+  { name: SERVER_NAME, version: SERVER_VERSION, description: SERVER_DESCRIPTION },
   { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
 );
 
@@ -397,21 +405,41 @@ function dispatchDataTool(
   }
 }
 
+/**
+ * A source as list_libraries reports it. A source serving a fetched copy also
+ * says when the copy was taken and why it may be behind, so the agent knows
+ * whether it is looking at the origin's current state.
+ */
+async function describeSource(entry: Library["sources"][number]) {
+  const freshness = entry.source.freshness ? await entry.source.freshness() : null;
+  return {
+    kind: entry.kind,
+    origin: entry.origin,
+    ...(freshness && {
+      fetchedAt: freshness.fetchedAt?.toISOString() ?? null,
+      problem: freshness.problem,
+    }),
+  };
+}
+
 const handleCallTool = async (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
   const { name: toolName, arguments: args } = request.params;
   console.error(`[tool] ${toolName} called`);
 
   if (toolName === "list_libraries") {
-    const payload = libraryList.map((l) => ({
-      name: l.name,
-      description: l.description ?? null,
-      capabilities: {
-        docs: !!l.mdSource,
-        api: !!l.apiIndex,
-        schema: !!l.schemaIndex,
-        data: !!l.dataRoot,
-      },
-    }));
+    const payload = await Promise.all(
+      libraryList.map(async (l) => ({
+        name: l.name,
+        description: l.description ?? null,
+        capabilities: {
+          docs: !!l.mdSource,
+          api: !!l.apiIndex,
+          schema: !!l.schemaIndex,
+          data: !!l.dataRoot,
+        },
+        sources: await Promise.all(l.sources.map(describeSource)),
+      })),
+    );
     return {
       content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
       isError: false,
@@ -559,7 +587,7 @@ if (port) {
       };
 
       const sessionServer = new McpServer(
-        { name: SERVER_NAME, version: "1.0.0", description: SERVER_DESCRIPTION },
+        { name: SERVER_NAME, version: SERVER_VERSION, description: SERVER_DESCRIPTION },
         { capabilities: { tools: {} } },
       );
       sessionServer.server.setRequestHandler(ListToolsRequestSchema, async () => ({

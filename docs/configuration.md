@@ -145,10 +145,15 @@ suitable for services that are only running while you work on them:
 
 ### When the service is unavailable
 
-Fetch failures are never fatal. The reason is logged to stderr and the last cached spec keeps being
-served; if nothing was ever cached the library simply reports no schemas. This applies to a service
-that is down, an error status, a timeout, and a response that is not a recognised schema — a
-known-good cached spec is never replaced by a bad response.
+Fetch failures are never fatal. The last cached spec keeps being served; if nothing was ever cached
+the library simply reports no schemas. This applies to a service that is down, an error status, a
+timeout, and a response that is not a recognised schema — a known-good cached spec is never
+replaced by a bad response.
+
+The agent is told, not left to guess. Until the service answers again, every schema tool appends a
+warning after its JSON answer naming the origin, when the served copy was fetched and why the last
+fetch failed, and `list_libraries` reports the same as `fetchedAt` and `problem` on the source. The
+reason is also logged to stderr.
 
 ### HTTPS and development certificates
 

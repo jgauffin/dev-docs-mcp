@@ -27,13 +27,35 @@ export class SchemaIndex {
     console.error(`[schema-index] Indexed ${this.cache.size} schemas`);
     return this.cache;
   }
+
+  /**
+   * A warning for the agent when the schemas it is reading may not match
+   * their origin, null when they are current or come straight from disk.
+   */
+  async staleness(): Promise<string | null> {
+    if (!this.source.freshness) return null;
+    const { origin, fetchedAt, problem } = await this.source.freshness();
+    if (!problem) return null;
+
+    if (!fetchedAt) {
+      return `warning: no spec has been fetched from ${origin} yet: ${problem}. Nothing can be answered until the service is reachable.`;
+    }
+    return (
+      `warning: these schemas are a cached copy of ${origin} fetched ${fetchedAt.toISOString()}. ` +
+      `The service has not answered since: ${problem}. The origin may have changed.`
+    );
+  }
 }
 
-function ok(data: unknown): ToolResult {
-  return {
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-    isError: false,
-  };
+/**
+ * The answer as JSON, followed by a warning when the schemas may be stale.
+ * The warning is a separate block so the JSON stays parseable on its own.
+ */
+async function ok(data: unknown, index: SchemaIndex): Promise<ToolResult> {
+  const content: ToolResult["content"] = [{ type: "text", text: JSON.stringify(data, null, 2) }];
+  const staleness = await index.staleness();
+  if (staleness) content.push({ type: "text", text: staleness });
+  return { content, isError: false };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,7 +72,7 @@ export async function handleListSchemas(index: SchemaIndex): Promise<ToolResult>
     description: s.description ?? null,
     definitionCount: s.definitions.size,
   }));
-  return ok(items);
+  return ok(items, index);
 }
 
 export async function handleListDefinitions(
@@ -66,7 +88,7 @@ export async function handleListDefinitions(
     title: (def.title as string) ?? null,
     description: (def.description as string) ?? null,
   }));
-  return ok(defs);
+  return ok(defs, index);
 }
 
 export async function handleGetDefinition(
@@ -80,7 +102,7 @@ export async function handleGetDefinition(
   if (!s) return textResult(`error: Schema "${args.schema}" not found`, true);
   const def = s.definitions.get(args.definition);
   if (!def) return textResult(`error: Definition "${args.definition}" not found in "${args.schema}"`, true);
-  return ok(def);
+  return ok(def, index);
 }
 
 export async function handleSearchDefinitions(
@@ -92,7 +114,7 @@ export async function handleSearchDefinitions(
   const schemas = await index.get();
   const s = schemas.get(args.schema);
   if (!s) return textResult(`error: Schema "${args.schema}" not found`, true);
-  return ok(searchInSchema(s, args.schema, args.keyword));
+  return ok(searchInSchema(s, args.schema, args.keyword), index);
 }
 
 export async function handleSearchAllSchemas(
@@ -105,5 +127,5 @@ export async function handleSearchAllSchemas(
   for (const [name, s] of schemas) {
     hits.push(...searchInSchema(s, name, args.keyword));
   }
-  return ok(hits);
+  return ok(hits, index);
 }

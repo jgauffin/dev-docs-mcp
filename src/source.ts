@@ -48,6 +48,26 @@ export interface DocsSource {
 
   /** Size of a file in bytes. Available wherever `openStream` is. */
   statFile?(relativePath: string): Promise<{ size: number }>;
+
+  /**
+   * How current the served content is. Only sources that serve a copy of
+   * content living elsewhere have this; a directory on disk is the content.
+   */
+  freshness?(): Promise<SourceFreshness>;
+}
+
+/**
+ * Where a source's content comes from and whether the copy being served is
+ * known to match it. Reported to the agent so a stale copy is never mistaken
+ * for the current state of the origin.
+ */
+export interface SourceFreshness {
+  /** The place the content is fetched from. */
+  origin: string;
+  /** When the served copy was taken. Null when nothing has been fetched yet. */
+  fetchedAt: Date | null;
+  /** Why the copy may be behind the origin. Null when the last fetch succeeded. */
+  problem: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -602,6 +622,8 @@ export class UrlSource implements DocsSource {
   private readonly relativePath: string;
   private readonly disk: FileSystemSource;
   private refreshPromise: Promise<void> | null = null;
+  /** Why the last fetch kept the cached spec, null when it succeeded. */
+  private lastProblem: string | null = null;
 
   constructor(
     private readonly url: string,
@@ -639,7 +661,22 @@ export class UrlSource implements DocsSource {
 
   private async refreshIfStale(): Promise<void> {
     if (!(await this.isStale())) return;
-    await this.fetchSpec();
+    this.lastProblem = await this.fetchSpec();
+    if (this.lastProblem) {
+      console.error(`[url] ${this.lastProblem}. Keeping cached spec.`);
+    } else {
+      console.error(`[url] Cached spec at ${this.cacheFilePath}`);
+    }
+  }
+
+  async freshness(): Promise<SourceFreshness> {
+    let fetchedAt: Date | null = null;
+    try {
+      fetchedAt = (await fs.stat(this.cacheFilePath)).mtime;
+    } catch {
+      // Nothing cached yet.
+    }
+    return { origin: this.url, fetchedAt, problem: this.lastProblem };
   }
 
   private async isStale(): Promise<boolean> {
@@ -660,49 +697,43 @@ export class UrlSource implements DocsSource {
     }
   }
 
-  /** Fetch, validate, and store the spec. Reports problems without throwing. */
-  private async fetchSpec(): Promise<void> {
+  /**
+   * Fetch, validate, and store the spec. Returns why the cached spec was kept
+   * instead, or null when it was replaced. Never throws.
+   */
+  private async fetchSpec(): Promise<string | null> {
     try {
       console.error(`[url] Fetching spec: ${this.url}`);
       const res = await this.get();
 
       if (res.status < 200 || res.status >= 300) {
-        console.error(`[url] ${this.url} answered ${res.status}, keeping cached spec`);
-        return;
+        return `${this.url} answered ${res.status}`;
       }
 
       const body = res.body;
       if (body.length > MAX_FILE_SIZE) {
-        console.error(`[url] ${this.url} spec is too large, keeping cached spec`);
-        return;
+        return `${this.url} answered with a spec larger than ${MAX_FILE_SIZE / 1024 / 1024} MB`;
       }
 
       let parsed: unknown;
       try {
         parsed = JSON.parse(body);
       } catch {
-        console.error(
-          `[url] ${this.url} did not answer with JSON — YAML specs are not supported. Keeping cached spec.`,
-        );
-        return;
+        return `${this.url} did not answer with JSON — YAML specs are not supported`;
       }
 
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        console.error(`[url] ${this.url} did not answer with a schema, keeping cached spec`);
-        return;
+        return `${this.url} did not answer with a schema`;
       }
 
       if (!detectFormat(parsed as Record<string, unknown>)) {
-        console.error(
-          `[url] ${this.url} is not a recognised OpenAPI or JSON Schema document, keeping cached spec`,
-        );
-        return;
+        return `${this.url} is not a recognised OpenAPI or JSON Schema document`;
       }
 
       await this.writeSpec(body);
-      console.error(`[url] Cached spec at ${this.cacheFilePath}`);
+      return null;
     } catch (err) {
-      console.error(`[url] Could not fetch ${this.url}, keeping cached spec: ${describeFetchError(err)}`);
+      return `${this.url} could not be fetched: ${describeFetchError(err)}`;
     }
   }
 

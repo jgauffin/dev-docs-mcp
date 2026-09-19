@@ -2,7 +2,14 @@
 
 Notable changes per release. Details are in [docs/](docs/) and in `git log`.
 
-## Unreleased
+## 1.2.0 - 2026-09-19
+
+### Added
+
+- The agent is told when a spec fetched from a service may be stale. While the service does not answer, every schema tool appends a warning after its JSON answer naming the origin, when the served copy was fetched and why the last fetch failed. `list_libraries` now lists each library's sources with their origin, and `fetchedAt` / `problem` for a `url` source.
+- `freshness()` on `DocsSource`, implemented by sources that serve a fetched copy.
+
+## 1.1.0 - 2026-08-30
 
 ### Changed
 

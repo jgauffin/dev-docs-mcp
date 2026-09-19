@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { UrlSource, createSourceFromConfig } from "../src/source.js";
-import { SchemaIndex } from "../src/schema/handlers.js";
+import { SchemaIndex, handleListSchemas, handleGetDefinition } from "../src/schema/handlers.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // These tests prove the business rules for services that publish their OpenAPI
@@ -163,6 +163,85 @@ describe("Serving a spec while its service is down", () => {
     expect(JSON.parse(await source.readFile("orders.json")).components.schemas).toHaveProperty(
       "Order",
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Telling the agent how current the served spec is
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Reporting the freshness of a served spec", () => {
+  /** Every text block after the JSON payload. */
+  function notes(result: { content: Array<{ text: string }> }): string {
+    return result.content.slice(1).map((c) => c.text).join("\n");
+  }
+
+  it("reports_when_the_spec_was_fetched_and_that_it_is_current_while_the_service_answers", async () => {
+    fetchMock.mockImplementation(respondWith(openApiSpec("Order")));
+    const source = createSource();
+    await source.listFiles("**/*.json");
+
+    const freshness = await source.freshness();
+
+    expect(freshness.origin).toBe(SPEC_URL);
+    expect(freshness.fetchedAt).toBeInstanceOf(Date);
+    expect(freshness.problem).toBeNull();
+  });
+
+  it("reports_why_the_spec_may_be_behind_once_the_service_stops_answering", async () => {
+    fetchMock.mockImplementation(respondWith(openApiSpec("Order")));
+    const source = createSource();
+    await source.listFiles("**/*.json");
+    const fetchedAt = (await source.freshness()).fetchedAt;
+
+    fetchMock.mockImplementation(connectionRefused);
+    await backdateCachedSpec(source, REFRESH_INTERVAL_MS * 2);
+    await source.refresh();
+
+    const freshness = await source.freshness();
+    expect(freshness.problem).toContain("ECONNREFUSED");
+    // The failed fetch left the copy alone, so its (backdated) fetch time stands.
+    expect(freshness.fetchedAt!.getTime()).toBeLessThan(fetchedAt!.getTime());
+  });
+
+  it("adds_no_note_to_schema_answers_while_the_service_answers", async () => {
+    fetchMock.mockImplementation(respondWith(openApiSpec("Order")));
+
+    const result = await handleListSchemas(new SchemaIndex(createSource()));
+
+    expect(result.content).toHaveLength(1);
+  });
+
+  it("warns_in_every_schema_answer_that_the_spec_is_a_cached_copy_when_the_service_is_down", async () => {
+    fetchMock.mockImplementation(respondWith(openApiSpec("Order")));
+    const source = createSource();
+    await source.listFiles("**/*.json");
+
+    fetchMock.mockImplementation(connectionRefused);
+    await backdateCachedSpec(source, REFRESH_INTERVAL_MS * 2);
+    await source.refresh();
+
+    const index = new SchemaIndex(source);
+    const list = await handleListSchemas(index);
+    const definition = await handleGetDefinition({ schema: "orders", definition: "Order" }, index);
+
+    for (const result of [list, definition]) {
+      expect(result.isError).toBe(false);
+      expect(JSON.parse(result.content[0]!.text)).toBeTruthy();
+      expect(notes(result)).toContain(SPEC_URL);
+      expect(notes(result)).toContain("ECONNREFUSED");
+      expect(notes(result)).toMatch(/fetched \d{4}-\d{2}-\d{2}T/);
+    }
+  });
+
+  it("explains_why_there_are_no_schemas_when_the_service_was_never_reachable", async () => {
+    fetchMock.mockImplementation(connectionRefused);
+
+    const result = await handleListSchemas(new SchemaIndex(createSource()));
+
+    expect(JSON.parse(result.content[0]!.text)).toEqual([]);
+    expect(notes(result)).toContain(SPEC_URL);
+    expect(notes(result)).toContain("ECONNREFUSED");
   });
 });
 
