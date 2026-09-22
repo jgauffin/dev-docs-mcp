@@ -2,6 +2,12 @@
 
 Notable changes per release. Details are in [docs/](docs/) and in `git log`.
 
+## 1.2.1 - 2026-09-22
+
+### Security
+
+- Updated dependencies to clear all `npm audit` findings. No functional changes.
+
 ## 1.2.0 - 2026-09-19
 
 ### Added
