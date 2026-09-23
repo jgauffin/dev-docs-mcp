@@ -368,6 +368,21 @@ describe("Reaching a service that uses a development certificate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("fetches_a_localhost_service_that_serves_over_plain_http", async () => {
+    // There is no certificate to waive over http, so the request must take the
+    // ordinary fetch path rather than the https one.
+    fetchMock.mockImplementation(respondWith(openApiSpec("Order")));
+
+    const source = createSourceFromConfig(
+      { type: "url", origin: "http://localhost:5225/openapi/v1.json", kind: "schema", name: "orders" },
+      cacheDir,
+      undefined,
+      REFRESH_INTERVAL_MS,
+    );
+
+    expect(await source.listFiles("**/*.json")).toEqual(["orders.json"]);
+  });
+
   it("verifies_the_certificate_of_a_service_that_is_not_on_this_machine", async () => {
     fetchMock.mockImplementation(respondWith(openApiSpec("Order")));
 

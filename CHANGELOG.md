@@ -4,9 +4,13 @@ Notable changes per release. Details are in [docs/](docs/) and in `git log`.
 
 ## 1.2.1 - 2026-09-22
 
+### Fixed
+
+- A `url` source pointing at a service on localhost over plain HTTP failed with `ERR_INVALID_PROTOCOL`. The certificate waiver now applies to HTTPS only.
+
 ### Security
 
-- Updated dependencies to clear all `npm audit` findings. No functional changes.
+- Updated dependencies to clear all `npm audit` findings.
 
 ## 1.2.0 - 2026-09-19
 

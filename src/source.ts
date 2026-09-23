@@ -744,10 +744,11 @@ export class UrlSource implements DocsSource {
    * certificate that no trust store accepts. Such a source is fetched through
    * the https module, which can waive verification for this one request —
    * unlike fetch, whose trust settings are process wide. Everything else goes
-   * through fetch with verification fully intact.
+   * through fetch with verification fully intact, including a plain-HTTP
+   * service, where there is no certificate to waive.
    */
   private async get(): Promise<{ status: number; body: string }> {
-    if (!this.allowSelfSignedCertificate) {
+    if (!this.allowSelfSignedCertificate || !this.url.toLowerCase().startsWith("https:")) {
       const res = await fetch(this.url, {
         headers: { Accept: "application/json", "User-Agent": "markdown-mcp" },
         signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
